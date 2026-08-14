@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from ..models import EnvironmentFeedback
-from .environment import Environment
+from .environment import IronBridgeEnvironment
 
 
 @dataclass
@@ -24,7 +24,7 @@ class ReflexionResult:
 def reflexion(
     task: str,
     llm: BaseChatModel,
-    environment: Environment,
+    environment: IronBridgeEnvironment,
     max_trials: int = 3,
     memory_size: int = 3,
 ) -> ReflexionResult:
