@@ -1,0 +1,43 @@
+=== RAG Demo Transcript (Person 3) ===
+Date: 2026-08-08
+Model: llama-3.1-8b-instant (Groq)
+
+--- Test 1: Simple policy question → Hybrid RAG ---
+User: What does Policy #2 say about fire exits and pallets?
+
+[RAG] Routing to Hybrid Search...
+[self-rag-check] support_check: passed=True -- overlap=0.95
+[RAG] Retrieved 2 chunk(s) across 1 hop(s).
+
+Assistant> Policy #2 states that fire lanes must remain clear at all times
+and no pallet may be stored within 1 meter of a marked fire exit.
+
+--- Test 2: Multi-part question → Agentic RAG ---
+User: What are the handling rules for steel and what happens when stock
+drops below the minimum level?
+
+[RAG] Routing to Agentic RAG (multi-part detected)...
+[self-rag-check] support_check: passed=True -- overlap=0.92
+[RAG] Retrieved 4 chunk(s) across 2 hop(s).
+
+Assistant> For Reinforcement Steel, mechanical lifting equipment must be
+used for units above 50kg — manual lifting is not allowed. For stock
+below minimum level, the Warehouse Supervisor must explicitly confirm
+the release before it proceeds.
+
+--- Test 3: Non-policy question → RAG skipped ---
+User: What steel do we have in stock?
+
+(No [RAG] Routing... message — inventory keywords blocked RAG)
+[calling tool] check_material_inventory(...)
+Assistant> We have Reinforcement Steel 12mm, 18 units at Warehouse B.
+
+--- Test 4: Self-RAG catching unsupported query ---
+User: What is the speed limit for forklifts in the parking lot?
+
+[RAG] Routing to Hybrid Search...
+[self-rag-check] DROPPED chunk (failed relevance): ...overlap=0.00
+[self-rag-check] DROPPED chunk (failed relevance): ...overlap=0.00
+[RAG] Retrieved 0 chunk(s) across 1 hop(s).
+
+Assistant> No relevant policy content was found for this question.

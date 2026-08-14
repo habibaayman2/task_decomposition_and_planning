@@ -1,0 +1,301 @@
+{
+  "timestamp": "2026-08-09 21:16:56",
+  "architectures": [
+    {
+      "name": "Naive RAG",
+      "accuracy": "2/6 (33%)",
+      "avg_tokens": 22,
+      "avg_latency": "0.040521s",
+      "tests": [
+        {
+          "test_id": 1,
+          "question": "How should cement bags be stored in the warehouse?",
+          "passed": true,
+          "context": "cement bags must be stacked on pallets to protect from moisture",
+          "latency": "0.040320s",
+          "tokens": 26,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 2,
+          "question": "Who can physically release materials from the warehouse?",
+          "passed": true,
+          "context": "warehouse supervisor and procurement officer can release materials",
+          "latency": "0.040323s",
+          "tokens": 20,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 3,
+          "question": "What does Policy #2 say about fire exits and pallets?",
+          "passed": false,
+          "context": "generic warehouse safety overview",
+          "latency": "0.040606s",
+          "tokens": 18,
+          "kw_pass": false,
+          "exact_pass": false,
+          "sub_pass": true
+        },
+        {
+          "test_id": 4,
+          "question": "What is the weight limit for lifting steel materials?",
+          "passed": false,
+          "context": "generic warehouse safety overview",
+          "latency": "0.040603s",
+          "tokens": 16,
+          "kw_pass": false,
+          "exact_pass": false,
+          "sub_pass": true
+        },
+        {
+          "test_id": 5,
+          "question": "What are the handling rules for steel and what happens when stock drops below the minimum level?",
+          "passed": false,
+          "context": "generic warehouse safety overview",
+          "latency": "0.040601s",
+          "tokens": 27,
+          "kw_pass": false,
+          "exact_pass": true,
+          "sub_pass": false
+        },
+        {
+          "test_id": 6,
+          "question": "What are the storage rules for cement and who can release materials?",
+          "passed": false,
+          "context": "cement bags must be stacked on pallets to protect from moisture",
+          "latency": "0.040672s",
+          "tokens": 29,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": false
+        }
+      ]
+    },
+    {
+      "name": "Hybrid Search (Vector + BM25)",
+      "accuracy": "4/6 (66%)",
+      "avg_tokens": 27,
+      "avg_latency": "0.081050s",
+      "tests": [
+        {
+          "test_id": 1,
+          "question": "How should cement bags be stored in the warehouse?",
+          "passed": true,
+          "context": "cement bags must be stacked on pallets to protect from moisture",
+          "latency": "0.101104s",
+          "tokens": 26,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 2,
+          "question": "Who can physically release materials from the warehouse?",
+          "passed": true,
+          "context": "warehouse supervisor and procurement officer can release materials",
+          "latency": "0.101140s",
+          "tokens": 20,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 3,
+          "question": "What does Policy #2 say about fire exits and pallets?",
+          "passed": true,
+          "context": "policy #2: pallets must maintain 1 meter clearance from fire exit",
+          "latency": "0.060608s",
+          "tokens": 27,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 4,
+          "question": "What is the weight limit for lifting steel materials?",
+          "passed": true,
+          "context": "steel materials: 50kg manual weight limit, mechanical lifting required above 50kg",
+          "latency": "0.060462s",
+          "tokens": 26,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 5,
+          "question": "What are the handling rules for steel and what happens when stock drops below the minimum level?",
+          "passed": false,
+          "context": "steel materials: 50kg manual weight limit, mechanical lifting required above 50kg",
+          "latency": "0.061117s",
+          "tokens": 36,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": false
+        },
+        {
+          "test_id": 6,
+          "question": "What are the storage rules for cement and who can release materials?",
+          "passed": false,
+          "context": "cement bags must be stacked on pallets to protect from moisture",
+          "latency": "0.101871s",
+          "tokens": 29,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": false
+        }
+      ]
+    },
+    {
+      "name": "Agentic RAG (Multi-hop)",
+      "accuracy": "5/6 (83%)",
+      "avg_tokens": 59,
+      "avg_latency": "0.310671s",
+      "tests": [
+        {
+          "test_id": 1,
+          "question": "How should cement bags be stored in the warehouse?",
+          "passed": true,
+          "context": "steel materials require mechanical lifting above 50kg manual limit. when stock drops below minimumstocklevel, warehouse supervisor handles workflow. cement bags stored on pallets for moisture protection. warehouse supervisor and procurement officer authorized to release materials.",
+          "latency": "0.310449s",
+          "tokens": 57,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 2,
+          "question": "Who can physically release materials from the warehouse?",
+          "passed": true,
+          "context": "steel materials require mechanical lifting above 50kg manual limit. when stock drops below minimumstocklevel, warehouse supervisor handles workflow. cement bags stored on pallets for moisture protection. warehouse supervisor and procurement officer authorized to release materials.",
+          "latency": "0.311035s",
+          "tokens": 55,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 3,
+          "question": "What does Policy #2 say about fire exits and pallets?",
+          "passed": false,
+          "context": "steel materials require mechanical lifting above 50kg manual limit. when stock drops below minimumstocklevel, warehouse supervisor handles workflow. cement bags stored on pallets for moisture protection. warehouse supervisor and procurement officer authorized to release materials.",
+          "latency": "0.310652s",
+          "tokens": 58,
+          "kw_pass": true,
+          "exact_pass": false,
+          "sub_pass": true
+        },
+        {
+          "test_id": 4,
+          "question": "What is the weight limit for lifting steel materials?",
+          "passed": true,
+          "context": "steel materials require mechanical lifting above 50kg manual limit. when stock drops below minimumstocklevel, warehouse supervisor handles workflow. cement bags stored on pallets for moisture protection. warehouse supervisor and procurement officer authorized to release materials.",
+          "latency": "0.310508s",
+          "tokens": 57,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 5,
+          "question": "What are the handling rules for steel and what happens when stock drops below the minimum level?",
+          "passed": true,
+          "context": "steel materials require mechanical lifting above 50kg manual limit. when stock drops below minimumstocklevel, warehouse supervisor handles workflow. cement bags stored on pallets for moisture protection. warehouse supervisor and procurement officer authorized to release materials.",
+          "latency": "0.310860s",
+          "tokens": 67,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 6,
+          "question": "What are the storage rules for cement and who can release materials?",
+          "passed": true,
+          "context": "steel materials require mechanical lifting above 50kg manual limit. when stock drops below minimumstocklevel, warehouse supervisor handles workflow. cement bags stored on pallets for moisture protection. warehouse supervisor and procurement officer authorized to release materials.",
+          "latency": "0.310521s",
+          "tokens": 61,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        }
+      ]
+    },
+    {
+      "name": "Graph RAG (Bonus)",
+      "accuracy": "6/6 (100%)",
+      "avg_tokens": 124,
+      "avg_latency": "0.000263s",
+      "tests": [
+        {
+          "test_id": 1,
+          "question": "How should cement bags be stored in the warehouse?",
+          "passed": true,
+          "context": "### Knowledge Graph Context (IronBridge Corpus)\n* **Entity: Procurement Officer** (Role) - Authorized to physically release materials\n* **Entity: Warehouse Supervisor** (Role) - Handles minimumstocklevel workflow when stock drops below threshold; Authorized to physically release materials\n* **Entity: Cement** (Material) - Stack limit 10 bags; Protect from moisture; Must be stored on wooden pallets\n* **Entity: Policy #2** (Regulation) - Pallets must be placed at least 1 meter away from fire exits\n* **Relationship:** (Cement) --[stored_on]--> (Wooden Pallets)\n* **Relationship:** (Warehouse Supervisor) --[authorized_for]--> (Release Materials)\n* **Relationship:** (Wooden Pallets) --[governed_by]--> (Policy #2)\n* **Relationship:** (Procurement Officer) --[authorized_for]--> (Release Materials)",
+          "latency": "0.000606s",
+          "tokens": 140,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 2,
+          "question": "Who can physically release materials from the warehouse?",
+          "passed": true,
+          "context": "### Knowledge Graph Context (IronBridge Corpus)\n* **Entity: Procurement Officer** (Role) - Authorized to physically release materials\n* **Entity: Warehouse Supervisor** (Role) - Handles minimumstocklevel workflow when stock drops below threshold; Authorized to physically release materials\n* **Entity: Steel Materials** (Material) - Weight limit 50kg for manual lifting; Mechanical assistance required over 50kg\n* **Relationship:** (Steel Materials) --[manual_weight_limit]--> (50kg)\n* **Relationship:** (Warehouse Supervisor) --[authorized_for]--> (Release Materials)\n* **Relationship:** (Procurement Officer) --[authorized_for]--> (Release Materials)",
+          "latency": "0.000192s",
+          "tokens": 105,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 3,
+          "question": "What does Policy #2 say about fire exits and pallets?",
+          "passed": true,
+          "context": "### Knowledge Graph Context (IronBridge Corpus)\n* **Entity: Cement** (Material) - Stack limit 10 bags; Protect from moisture; Must be stored on wooden pallets\n* **Entity: Policy #2** (Regulation) - Pallets must be placed at least 1 meter away from fire exits\n* **Relationship:** (Wooden Pallets) --[governed_by]--> (Policy #2)\n* **Relationship:** (Policy #2) --[requires_distance]--> (1 meter)\n* **Relationship:** (Cement) --[stored_on]--> (Wooden Pallets)\n* **Relationship:** (1 meter) --[clearance_from]--> (Fire Exit)",
+          "latency": "0.000186s",
+          "tokens": 102,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 4,
+          "question": "What is the weight limit for lifting steel materials?",
+          "passed": true,
+          "context": "### Knowledge Graph Context (IronBridge Corpus)\n* **Entity: Procurement Officer** (Role) - Authorized to physically release materials\n* **Entity: Warehouse Supervisor** (Role) - Handles minimumstocklevel workflow when stock drops below threshold; Authorized to physically release materials\n* **Entity: Steel Materials** (Material) - Weight limit 50kg for manual lifting; Mechanical assistance required over 50kg\n* **Relationship:** (Steel Materials) --[manual_weight_limit]--> (50kg)\n* **Relationship:** (Warehouse Supervisor) --[authorized_for]--> (Release Materials)\n* **Relationship:** (Procurement Officer) --[authorized_for]--> (Release Materials)",
+          "latency": "0.000183s",
+          "tokens": 106,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 5,
+          "question": "What are the handling rules for steel and what happens when stock drops below the minimum level?",
+          "passed": true,
+          "context": "### Knowledge Graph Context (IronBridge Corpus)\n* **Entity: Procurement Officer** (Role) - Authorized to physically release materials\n* **Entity: Warehouse Supervisor** (Role) - Handles minimumstocklevel workflow when stock drops below threshold; Authorized to physically release materials\n* **Entity: Steel Materials** (Material) - Weight limit 50kg for manual lifting; Mechanical assistance required over 50kg\n* **Relationship:** (Steel Materials) --[manual_weight_limit]--> (50kg)\n* **Relationship:** (Warehouse Supervisor) --[authorized_for]--> (Release Materials)\n* **Relationship:** (Procurement Officer) --[authorized_for]--> (Release Materials)",
+          "latency": "0.000198s",
+          "tokens": 117,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        },
+        {
+          "test_id": 6,
+          "question": "What are the storage rules for cement and who can release materials?",
+          "passed": true,
+          "context": "### Knowledge Graph Context (IronBridge Corpus)\n* **Entity: Procurement Officer** (Role) - Authorized to physically release materials\n* **Entity: Warehouse Supervisor** (Role) - Handles minimumstocklevel workflow when stock drops below threshold; Authorized to physically release materials\n* **Entity: Cement** (Material) - Stack limit 10 bags; Protect from moisture; Must be stored on wooden pallets\n* **Entity: Policy #2** (Regulation) - Pallets must be placed at least 1 meter away from fire exits\n* **Entity: Steel Materials** (Material) - Weight limit 50kg for manual lifting; Mechanical assistance required over 50kg\n* **Relationship:** (Cement) --[stored_on]--> (Wooden Pallets)\n* **Relationship:** (Steel Materials) --[manual_weight_limit]--> (50kg)\n* **Relationship:** (Warehouse Supervisor) --[authorized_for]--> (Release Materials)\n* **Relationship:** (Procurement Officer) --[authorized_for]--> (Release Materials)\n* **Relationship:** (Wooden Pallets) --[governed_by]--> (Policy #2)",
+          "latency": "0.000210s",
+          "tokens": 174,
+          "kw_pass": true,
+          "exact_pass": true,
+          "sub_pass": true
+        }
+      ]
+    }
+  ]
+}
