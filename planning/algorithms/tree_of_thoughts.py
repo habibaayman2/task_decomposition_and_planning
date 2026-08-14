@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -19,12 +20,13 @@ class ThoughtCandidates(BaseModel):
     candidates: list[str] = Field(min_length=1, max_length=3)
 
 
-class ThoughtEvaluations(BaseModel):
-    """Batch evaluation schema — evaluates multiple candidates in ONE LLM call."""
-    model_config = ConfigDict(extra="forbid")
-    evaluations: list[ThoughtEvaluationItem] = Field(min_length=1)
-
-
+# NOTE (fix #1, kept from previous patch): ThoughtEvaluationItem MUST be
+# defined before ThoughtEvaluations, which references it in
+# `list[ThoughtEvaluationItem]`. With `from __future__ import annotations`
+# active, that annotation is a string (forward reference) resolved by
+# looking up the name in this module's namespace at class-creation time.
+# Defining it below caused `.annotation.__args__` to come back empty --
+# the "IndexError: tuple index out of range" seen in model_provider.py.
 class ThoughtEvaluationItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     candidate_index: int = Field(ge=0)
@@ -32,7 +34,54 @@ class ThoughtEvaluationItem(BaseModel):
     rationale: str
 
 
+class ThoughtEvaluations(BaseModel):
+    """Batch evaluation schema — evaluates multiple candidates in ONE LLM call."""
+    model_config = ConfigDict(extra="forbid")
+    evaluations: list[ThoughtEvaluationItem] = Field(min_length=1)
+
+
 default_root_state = "Initial project status review"
+
+
+# ---------------------------------------------------------------------------
+# NOTE (fix #2): llama-3.3-70b-versatile on Groq intermittently returns a
+# malformed tool call for ThoughtEvaluations -- either a truncated/incorrect
+# closing tag or a field-order hiccup -- which raises groq.BadRequestError
+# ("Failed to call a function") before it ever reaches our pydantic
+# validation. This is a known rough edge of Groq's function-calling mode
+# with multi-item batch schemas, not a bug in our schema itself. A short
+# bounded retry with a stricter follow-up instruction resolves it in
+# practice without masking a real, persistent failure (it still raises
+# after `retries` attempts).
+# ---------------------------------------------------------------------------
+
+def _invoke_structured_with_retry(
+    llm: BaseChatModel,
+    schema: type[BaseModel],
+    messages: list[tuple[str, str]],
+    temperature: float,
+    retries: int = 2,
+):
+    structured = llm.with_structured_output(schema, method="function_calling")
+    last_err: Exception | None = None
+    attempt_messages = list(messages)
+    for attempt in range(retries + 1):
+        try:
+            return structured.invoke(attempt_messages, temperature=temperature)
+        except Exception as e:
+            last_err = e
+            attempt_messages = list(messages) + [
+                (
+                    "human",
+                    "Your previous response was not a valid call for this schema "
+                    "(wrong fields, wrong order, or malformed). Call the function "
+                    "again with EXACTLY the fields the schema defines, in a single "
+                    "well-formed call, and nothing else.",
+                )
+            ]
+            if attempt < retries:
+                time.sleep(0.5 * (attempt + 1))
+    raise last_err
 
 
 def tree_of_thoughts(
@@ -63,19 +112,21 @@ def tree_of_thoughts(
         candidates: list[Thought] = []
 
         for parent in frontier:
-            generated = llm.with_structured_output(
+            generated = _invoke_structured_with_retry(
+                llm,
                 ThoughtCandidates,
-                method="function_calling",
-            ).invoke([
-                ("system", (
-                    "Generate distinct, fully formed candidate solution plans. "
-                    "Each proposal must contain specific actions and explicit budget/schedule verification."
-                )),
-                ("human", f"""Problem: {problem}
+                [
+                    ("system", (
+                        "Generate distinct, fully formed candidate solution plans. "
+                        "Each proposal must contain specific actions and explicit budget/schedule verification."
+                    )),
+                    ("human", f"""Problem: {problem}
 Previous step: {parent.state}
 
 Propose two distinct, complete, actionable continuations."""),
-            ], temperature=0.4)
+                ],
+                temperature=0.4,
+            )
 
             raw_candidates = generated.candidates[:2]
             if not raw_candidates:
@@ -85,21 +136,25 @@ Propose two distinct, complete, actionable continuations."""),
                 eval_prompt = "\n\n".join(
                     f"[{i}] {state}" for i, state in enumerate(raw_candidates)
                 )
-                batch_result = llm.with_structured_output(
+                batch_result = _invoke_structured_with_retry(
+                    llm,
                     ThoughtEvaluations,
-                    method="function_calling",
-                ).invoke([
-                    ("system", (
-                        "Evaluate multiple construction planning strategies independently. "
-                        "For each candidate, assign a score (0.0-1.0) and brief rationale."
-                    )),
-                    ("human", f"""Problem: {problem}
+                    [
+                        ("system", (
+                            "Evaluate multiple construction planning strategies independently. "
+                            "For each candidate, assign a score (0.0-1.0) and a brief rationale."
+                        )),
+                        ("human", f"""Problem: {problem}
 
 Candidates to evaluate:
 {eval_prompt}
 
-Return one evaluation per candidate, indexed 0..N-1."""),
-                ], temperature=0.1)
+Call the function ONCE with an "evaluations" list containing exactly one
+{{candidate_index, score, rationale}} object per candidate above, indexed 0..N-1.
+Do not include any other fields."""),
+                    ],
+                    temperature=0.1,
+                )
 
                 eval_map = {e.candidate_index: e for e in batch_result.evaluations}
                 for i, state in enumerate(raw_candidates):
@@ -115,15 +170,17 @@ Return one evaluation per candidate, indexed 0..N-1."""),
                         return [candidates[-1]]
             else:
                 for state in raw_candidates:
-                    judged = llm.with_structured_output(
+                    judged = _invoke_structured_with_retry(
+                        llm,
                         ThoughtEvaluationItem,
-                        method="function_calling",
-                    ).invoke([
-                        ("system", "Independently evaluate a construction planning strategy."),
-                        ("human", f"""Problem: {problem}
+                        [
+                            ("system", "Independently evaluate a construction planning strategy."),
+                            ("human", f"""Problem: {problem}
 Candidate strategy: {state}
 Score feasibility, actionable detail, and budget adherence (0.0 to 1.0)."""),
-                    ], temperature=0.1)
+                        ],
+                        temperature=0.1,
+                    )
                     candidates.append(
                         Thought(state=state, score=judged.score, rationale=judged.rationale)
                     )
