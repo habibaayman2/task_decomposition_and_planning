@@ -1,32 +1,43 @@
 from __future__ import annotations
 
 import math
+import sys
+from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..models import EnvironmentFeedback
-from .environment import Environment
+# Resolve project root for cross-module imports
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from models import EnvironmentFeedback
 
 
 class LATSAction(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
     action: str = Field(min_length=2)
     state: str = Field(min_length=2)
 
 
 class LATSActionBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     actions: list[LATSAction] = Field(min_length=1, max_length=3)
 
 
 class ValueEstimate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     score: float = Field(ge=0.0, le=1.0)
+
+
+@runtime_checkable
+class Evaluator(Protocol):
+    def evaluate(self, state: str) -> EnvironmentFeedback:
+        ...
 
 
 @dataclass
@@ -41,6 +52,7 @@ class LATSNode:
     model_score: float = 0.0
     feedback: EnvironmentFeedback | None = None
     reflections: list[str] = field(default_factory=list)
+    depth: int = 0
 
     @property
     def mean_value(self) -> float:
@@ -54,19 +66,20 @@ class LATSResult:
     best_score: float
     iterations: int
     root: LATSNode
+    pruned_count: int = 0
 
 
-def _uct(node: LATSNode, exploration_weight: float) -> float:
+def _uct(node: LATSNode, exploration_weight: float, log_parent_visits: float) -> float:
     if node.visits == 0:
         return float("inf")
-    parent_visits = max(node.parent.visits if node.parent else 1, 1)
-    return node.mean_value + exploration_weight * math.sqrt(math.log(parent_visits) / node.visits)
+    return node.mean_value + exploration_weight * math.sqrt(log_parent_visits / node.visits)
 
 
 def _select_leaf(root: LATSNode, exploration_weight: float) -> LATSNode:
     node = root
     while node.children:
-        node = max(node.children, key=lambda child: _uct(child, exploration_weight))
+        log_parent = math.log(max(node.visits, 1))
+        node = max(node.children, key=lambda child: _uct(child, exploration_weight, log_parent))
     return node
 
 
@@ -79,8 +92,12 @@ def _backpropagate(node: LATSNode, value: float) -> None:
 
 def _trajectory_reflections(node: LATSNode) -> list[str]:
     path: list[str] = []
+    seen: set[str] = set()
     while node is not None:
-        path.extend(node.reflections)
+        for r in node.reflections:
+            if r not in seen:
+                path.append(r)
+                seen.add(r)
         node = node.parent
     return list(reversed(path))
 
@@ -88,24 +105,48 @@ def _trajectory_reflections(node: LATSNode) -> list[str]:
 def lats(
     task: str,
     llm: BaseChatModel,
-    environment: Environment,
+    environment: Evaluator,
     iterations: int = 2,
     n_actions: int = 2,
     exploration_weight: float = 1.414,
+    max_depth: int = 5,
+    prune_threshold: float = 0.15,
 ) -> LATSResult:
+    """Language Agent Tree Search with branch pruning and depth limits.
+
+    Args:
+        task: The planning problem.
+        llm: Language model for generation and evaluation.
+        environment: Grounded evaluator.
+        iterations: MCTS rollout iterations.
+        n_actions: Branching factor per node.
+        exploration_weight: UCT exploration constant.
+        max_depth: Maximum tree depth before forced leaf selection.
+        prune_threshold: Branches with environment_score below this
+            after evaluation are not expanded further.
+    """
     if iterations < 1 or n_actions < 1:
         raise ValueError("iterations and n_actions must be positive")
-    root = LATSNode(state="No attempt yet.")
+    if max_depth < 1:
+        raise ValueError("max_depth must be positive")
+
+    root = LATSNode(state="No attempt yet.", depth=0)
     best = root
+    pruned = 0
     completed_iterations = 0
+
     for iteration in range(1, iterations + 1):
         completed_iterations = iteration
         leaf = _select_leaf(root, exploration_weight)
+
+        if leaf.depth >= max_depth:
+            continue
+
         lessons = _trajectory_reflections(leaf)
         lesson_text = "\n".join(f"- {item}" for item in lessons[-4:]) or "- None yet."
         proposed = llm.with_structured_output(
             LATSActionBatch,
-            method="json_schema",
+            method="function_calling",
         ).invoke([
             ("system", "You are the action generator in LATS."),
             ("human", f"""Task: {task}
@@ -118,15 +159,33 @@ Propose exactly {n_actions} distinct complete candidate solution(s). Each state 
 contain the fully written solution, not a placeholder or description of a solution.""",
             ),
         ], temperature=0.5)
+
         for item in proposed.actions[:n_actions]:
-            child = LATSNode(state=item.state.strip(), action=item.action, parent=leaf)
+            child = LATSNode(
+                state=item.state.strip(),
+                action=item.action,
+                parent=leaf,
+                depth=leaf.depth + 1,
+            )
             leaf.children.append(child)
             feedback = environment.evaluate(child.state)
             child.feedback = feedback
             child.environment_score = feedback.score
+
+            if feedback.score < prune_threshold:
+                child.reflections.append(
+                    f"Pruned: score {feedback.score:.2f} below threshold {prune_threshold}. "
+                    f"Not worth expanding."
+                )
+                pruned += 1
+                _backpropagate(child, feedback.score)
+                if best is root or child.environment_score > best.environment_score:
+                    best = child
+                continue
+
             value_judgment = llm.with_structured_output(
                 ValueEstimate,
-                method="json_schema",
+                method="function_calling",
             ).invoke([
                 ("system", "You are the LATS value function."),
                 ("human", f"""Task: {task}
@@ -138,6 +197,7 @@ Estimate the candidate's future usefulness."""),
             ], temperature=0.1)
             child.model_score = value_judgment.score
             combined_value = 0.75 * child.environment_score + 0.25 * child.model_score
+
             if not feedback.success:
                 response = llm.invoke([
                     ("system", "Create a branch-level LATS reflection grounded in environment feedback."),
@@ -152,20 +212,28 @@ Explain briefly why this branch failed and how a later expansion should change."
                     raise RuntimeError("The chat model returned an empty or unsupported response")
                 reflection = reflection.strip()
                 child.reflections.append(reflection)
+
             _backpropagate(child, combined_value)
             if best is root or child.environment_score > best.environment_score:
                 best = child
             if feedback.success:
-                return LATSResult(True, child.state, child.environment_score, completed_iterations, root)
-    return LATSResult(False, best.state, best.environment_score, completed_iterations, root)
+                return LATSResult(
+                    True, child.state, child.environment_score,
+                    completed_iterations, root, pruned,
+                )
+
+    return LATSResult(
+        False, best.state, best.environment_score,
+        completed_iterations, root, pruned,
+    )
 
 
 def flatten_lats_tree(root: LATSNode) -> list[dict]:
     records: list[dict] = []
-    queue: list[tuple[LATSNode, str | None]] = [(root, None)]
+    queue: deque[tuple[LATSNode, str | None]] = deque([(root, None)])
     next_id = 0
     while queue:
-        node, parent_id = queue.pop(0)
+        node, parent_id = queue.popleft()
         node_id = f"n{next_id}"
         next_id += 1
         records.append(
@@ -180,6 +248,8 @@ def flatten_lats_tree(root: LATSNode) -> list[dict]:
                 "model_score": node.model_score,
                 "feedback": node.feedback.model_dump() if node.feedback else None,
                 "reflections": node.reflections,
+                "depth": node.depth,
+                "pruned": any("Pruned:" in r for r in node.reflections),
             }
         )
         queue.extend((child, node_id) for child in node.children)

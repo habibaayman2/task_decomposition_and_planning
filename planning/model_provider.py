@@ -143,57 +143,64 @@ class GroqFallbackWrapper:
 
 
 def _fake_structured_response(schema: Type[BaseModel], prompt_text: str, call_count: int) -> BaseModel:
+    fields = set(schema.model_fields.keys())
     ctx = _extract_ironbridge_context(prompt_text)
-    schema_name = schema.__name__
 
-    if schema_name in ("_GeneratedPlan", "GeneratedPlan"):
+    # GeneratedPlan (decomposition.py): goal, tasks
+    if fields == {"goal", "tasks"}:
         return _fake_generated_plan(schema, prompt_text, ctx)
 
-    if schema_name in ("DynamicDecision", "_DynamicDecision"):
+    # DynamicDecision (dynamic_decomposition.py): done, next_task
+    if fields == {"done", "next_task"}:
         step = call_count
         if step > len(RESPONSE_STRATEGIES):
             return schema(done=True, next_task="")
         strat = RESPONSE_STRATEGIES[step - 1]
         return schema(done=False, next_task=strat["text"])
 
-    if schema_name in ("ThoughtCandidates", "_ThoughtCandidates"):
+    # ThoughtCandidates (tree_of_thoughts.py): candidates
+    if fields == {"candidates"}:
         idx = (call_count - 1) * 2 % len(RESPONSE_STRATEGIES)
         picks = [RESPONSE_STRATEGIES[idx]["text"], RESPONSE_STRATEGIES[(idx + 1) % len(RESPONSE_STRATEGIES)]["text"]]
         return schema(candidates=picks)
 
-    if schema_name in ("ThoughtEvaluations", "_ThoughtEvaluations"):
-        from tree_of_thoughts import ThoughtEvaluationItem
-        evals = [
-            ThoughtEvaluationItem(candidate_index=0, score=0.7, rationale="batch fallback"),
-            ThoughtEvaluationItem(candidate_index=1, score=0.6, rationale="batch fallback"),
-        ]
-        return schema(evaluations=evals)
-
-    if schema_name in ("ThoughtEvaluationItem", "ThoughtEvaluation", "_ThoughtEvaluation"):
+    # ThoughtEvaluationItem (tree_of_thoughts.py batch): candidate_index, score, rationale
+    if fields == {"candidate_index", "score", "rationale"}:
         score = _deterministic_score_for_text(prompt_text)
-        return schema(score=score, rationale=f"deterministic heuristic score ({score:.2f})")
+        return schema(candidate_index=0, score=score, rationale=f"deterministic heuristic score ({score:.2f})")
 
-    if schema_name in ("LATSAction", "_LATSAction"):
+    # ThoughtEvaluations (tree_of_thoughts.py batch wrapper): evaluations
+    if fields == {"evaluations"}:
+        item_cls = schema.model_fields["evaluations"].annotation.__args__[0]
+        score = _deterministic_score_for_text(prompt_text)
+        return schema(evaluations=[
+            item_cls(candidate_index=0, score=score, rationale=f"batch eval score ({score:.2f})")
+        ])
+
+    # LATSAction (lats.py): action, state
+    if fields == {"action", "state"}:
         idx = (call_count - 1) % len(RESPONSE_STRATEGIES)
         strat = RESPONSE_STRATEGIES[idx]
         return schema(action=strat["name"], state=strat["text"])
 
-    if schema_name in ("LATSActionBatch", "_LATSActionBatch"):
+    # LATSActionBatch (lats.py): actions
+    if fields == {"actions"}:
         action_cls = schema.model_fields["actions"].annotation.__args__[0]
         actions = [action_cls(action=s["name"], state=s["text"]) for s in RESPONSE_STRATEGIES[:2]]
         return schema(actions=actions)
 
-    if schema_name in ("ValueEstimate", "_ValueEstimate"):
+    # ValueEstimate (lats.py): score
+    if fields == {"score"}:
         return schema(score=_deterministic_score_for_text(prompt_text))
 
-    if schema_name in ("EnvironmentFeedback", "_EnvironmentFeedback"):
-        return schema(success=True, score=0.5, details=["deterministic fallback"])
+    # EnvironmentFeedback
+    if fields == {"success", "score", "details"}:
+        return schema(success=True, score=0.5, details=["deterministic fallback -- no real evaluation performed"])
 
     raise NotImplementedError(
-        f"DeterministicPlanningLLM has no fake generator for schema '{schema_name}'. "
+        f"DeterministicPlanningLLM has no fake generator for a schema with fields {fields}. "
         "Add a case in planning/model_provider.py::_fake_structured_response."
     )
-
 
 def _deterministic_score_for_text(text: str) -> float:
     lowered = text.lower()
