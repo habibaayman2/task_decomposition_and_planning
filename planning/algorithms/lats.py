@@ -105,6 +105,7 @@ class LATSResult:
     best_score: float
     iterations: int
     root: LATSNode
+    pruned_count: int = 0
 
 
 def _uct(node: LATSNode, exploration_weight: float) -> float:
@@ -143,8 +144,16 @@ def lats(
     iterations: int = 2,
     n_actions: int = 2,
     exploration_weight: float = 1.414,
-    **kwargs,  
+    max_depth: int = 5,
+    prune_threshold: float = 0.0,
 ) -> LATSResult:
+    
+    if iterations < 1:
+        raise ValueError("iterations must be positive")
+    if n_actions < 1:
+        raise ValueError("n_actions must be positive")
+    if max_depth < 1:
+        raise ValueError("max_depth must be positive")
     if iterations < 1 or n_actions < 1:
         raise ValueError("iterations and n_actions must be positive")
     root = LATSNode(state="No attempt yet.")
@@ -227,8 +236,22 @@ Explain briefly why this branch failed and how a later expansion should change."
             if best is root or child.environment_score > best.environment_score:
                 best = child
             if feedback.success:
-                return LATSResult(True, child.state, child.environment_score, completed_iterations, root)
-    return LATSResult(False, best.state, best.environment_score, completed_iterations, root)
+                break  # exit loop, will return after pruning count
+
+    # Count pruned nodes
+    pruned_count = 0
+    if prune_threshold > 0:
+        def _count_pruned(node: LATSNode):
+            nonlocal pruned_count
+            for child in node.children:
+                if child.score < prune_threshold:
+                    pruned_count += 1
+                _count_pruned(child)
+        _count_pruned(root)
+
+    if best is not root and best.environment_score > 0 and (best.feedback is None or best.feedback.success):
+        return LATSResult(True, best.state, best.environment_score, completed_iterations, root, pruned_count)
+    return LATSResult(False, best.state, best.environment_score, completed_iterations, root, pruned_count)
 
 
 def flatten_lats_tree(root: LATSNode) -> list[dict]:
@@ -254,4 +277,5 @@ def flatten_lats_tree(root: LATSNode) -> list[dict]:
             }
         )
         queue.extend((child, node_id) for child in node.children)
+        
     return records

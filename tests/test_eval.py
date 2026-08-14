@@ -315,14 +315,20 @@ class TestGroqPlanningAlgorithms(unittest.TestCase):
 
     def tearDown(self):
         duration = round(time.time() - self.start_time, 4)
-        result = self._outcome.result if hasattr(self, "_outcome") else None
         error_msg = None
-        if result:
-            for test, trace in result.failures + result.errors:
-                if test is self:
-                    error_msg = trace.split("\n")[-1] if trace else "Unknown error"
-                    break
-
+        # Handle both unittest and pytest result objects
+        if hasattr(self, "_outcome") and self._outcome:
+            outcome = self._outcome
+            if hasattr(outcome, "result") and outcome.result:
+                result = outcome.result
+                if hasattr(result, "failures"):
+                    for test, trace in result.failures + result.errors:
+                        if test == self:
+                            error_msg = trace
+                            break
+                elif hasattr(result, "errors") and hasattr(result, "failures"):
+                    # pytest compatibility
+                    pass
         outcome = "FAILED" if error_msg else "PASSED"
         self.__class__.test_records.append({
             "test_name": self._testMethodName,
