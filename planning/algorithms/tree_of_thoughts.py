@@ -33,6 +33,13 @@ class ThoughtEvaluationItem(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     rationale: str
 
+ThoughtEvaluation = ThoughtEvaluationItem
+
+class ThoughtEvaluations(BaseModel):
+    """Batch evaluation schema — evaluates multiple candidates in ONE LLM call."""
+    model_config = ConfigDict(extra="forbid")
+    evaluations: list[ThoughtEvaluationItem] = Field(min_length=1)
+
 
 class ThoughtEvaluations(BaseModel):
     """Batch evaluation schema — evaluates multiple candidates in ONE LLM call."""
