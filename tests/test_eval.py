@@ -17,11 +17,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from planning.environment import IronBridgeEnvironment
+from planning.algorithms.environment import IronBridgeEnvironment
 from planning.model_provider import get_planning_llm
-from planning.plan_and_solve import plan_and_solve, PlanAndSolveError
-from planning.tree_of_thoughts import tree_of_thoughts
-from planning.lats import lats, LATSResult, flatten_lats_tree, LATSNode
+from planning.algorithms.plan_and_solve import plan_and_solve, PlanAndSolveError
+from planning.algorithms.tree_of_thoughts import tree_of_thoughts
+from planning.algorithms.lats import lats, LATSResult, flatten_lats_tree, LATSNode
 
 # Global lock to protect non-thread-safe LLM clients during parallel evaluation
 _LLM_GLOBAL_LOCK = threading.Lock()
