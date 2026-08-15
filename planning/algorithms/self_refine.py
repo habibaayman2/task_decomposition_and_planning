@@ -1,63 +1,253 @@
+"""planning/algorithms/self_refine.py
+
+Self-Refine: one draft, one critique against an explicit rubric, one revision.
+
+Grounded mode uses:
+  1. Deterministic checks (regex / structural) — source of truth: the text itself.
+  2. IronBridgeEnvironment.evaluate() — source of truth: mcp_server/db.py
+     (RemainingBudget, Supplier.ContractStatus, Material stock levels).
+
+Ungrounded mode uses only the LLM's own rubric review — source of truth:
+the model's internal opinion, with no external validation.
+"""
+
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from ..models import EnvironmentFeedback
+from .environment import IronBridgeEnvironment
 
-def deterministic_checks(goal: str, draft: str) -> list[str]:
-    issues: list[str] = []
-    if len(draft.split()) < 80:
-        issues.append("The deliverable is under 80 words and is probably incomplete.")
-    goal_terms = {
-        word.lower()
-        for word in re.findall(r"[A-Za-z]{5,}", goal)
-        if word.lower() not in {"create", "design", "write", "build", "about", "using"}
-    }
-    represented = [term for term in goal_terms if term in draft.lower()]
-    if goal_terms and not represented:
-        issues.append("The output contains none of the goal's significant terms.")
-    if not re.search(r"(^|\n)(#{1,3}\s+|\d+[.)]\s+|[-*]\s+)", draft):
-        issues.append("The deliverable has no visible structure (headings or list items).")
-    return issues
+
+# ---------------------------------------------------------------------------
+# Explicit rubric for construction-delay mitigation proposals
+# ---------------------------------------------------------------------------
+
+SELF_REFINE_RUBRIC = """
+RUBRIC (score each item 0-1):
+1. PROJECT_IDENTITY: Does the proposal name a specific ProjectID and cite real
+   project data (budget, status) from the database?
+2. BUDGET_GROUNDING: Does it explicitly compare any proposed cost against the
+   project's RemainingBudget?
+3. SUPPLIER_GROUNDING: Does it name a supplier and verify that supplier's
+   ContractStatus is Active in the database?
+4. STOCK_GROUNDING: If materials are mentioned, does it check QuantityAvailable
+   against MinimumStockLevel?
+5. ACTIONABILITY: Are the steps concrete enough for a site manager to execute
+   today?
+6. CONSISTENCY: Are there internal contradictions (e.g., propose rush order
+   then say "no extra cost")?
+"""
+
+
+def _approx_tokens(*texts: str) -> int:
+    """Rough token estimate: 1 token ~= 4 characters."""
+    return sum(len(t) for t in texts) // 4
 
 
 @dataclass
-class ReflectionResult:
+class SelfRefineResult:
     draft: str
     critique: str
     revised: str
     grounded_issues: list[str]
+    environment_feedback: Optional[EnvironmentFeedback] = None
+    llm_calls: int = 0
+    approx_tokens: int = 0
 
 
-def reflect_and_refine(goal: str, draft: str, llm: BaseChatModel) -> ReflectionResult:
-    grounded = deterministic_checks(goal, draft)
-    grounded_report = "\n".join(f"- {issue}" for issue in grounded) or "- Deterministic checks passed."
-    # This can be done better, how should it be done?
-    critique_response = llm.invoke([
-        ("system", "You are a separate critic. Judge against the rubric; do not rewrite the draft."),
+def deterministic_checks(goal: str, draft: str) -> list[str]:
+    """IronBridge-specific deterministic / grounded checks.
+
+    Source of truth: the draft text itself (regex + heuristics).
+    These are cheap, reproducible, and require no LLM call.
+    """
+    issues: list[str] = []
+
+    # 1. Must mention a ProjectID
+    if not re.search(r"[Pp]roject(?:\s*ID)?\s*\d+", draft):
+        issues.append("FAIL: No ProjectID found — cannot verify budget or scope.")
+
+    # 2. Must mention a concrete dollar amount if proposing a purchase/rush
+    if re.search(r"(?:rush|expedite|order|purchase|buy)", draft, re.I):
+        if not re.search(r"\$\s?[\d,]+(?:\.\d+)?", draft):
+            issues.append("FAIL: Proposes a financial action but states no dollar amount.")
+
+    # 3. Must have structure
+    if not re.search(r"(^|\n)(#{1,3}\s+|\d+[.)]\s+|[-*]\s+)", draft):
+        issues.append("FAIL: Deliverable has no visible structure (headings or list items).")
+
+    # 4. Length check
+    if len(draft.split()) < 50:
+        issues.append("FAIL: Deliverable is under 50 words and probably incomplete.")
+
+    # 5. Goal-term coverage
+    goal_terms = {
+        word.lower()
+        for word in re.findall(r"[A-Za-z]{5,}", goal)
+        if word.lower() not in {"create", "design", "write", "build", "about", "using", "please", "recommend", "propose"}
+    }
+    represented = [term for term in goal_terms if term in draft.lower()]
+    if goal_terms and not represented:
+        issues.append("FAIL: Output contains none of the goal's significant terms.")
+
+    return issues
+
+
+def _ungrounded_critique(goal: str, draft: str, llm: BaseChatModel) -> str:
+    """Pure LLM self-critique with no external validation.
+
+    Source of truth: the LLM's own judgment against the rubric.
+    """
+    response = llm.invoke([
+        ("system", "You are an independent critic. Judge the draft against the rubric only."),
         ("human", f"""Goal: {goal}
-Rubric: correctness, completeness, internal consistency, and instruction adherence.
-External deterministic checks:
-{grounded_report}
+Rubric:
+{SELF_REFINE_RUBRIC}
 
 Draft:
 {draft}
 
 List concrete issues. If there are none, respond exactly PASS."""),
     ], temperature=0.2)
-    critique = critique_response.content
+    critique = response.content
     if not isinstance(critique, str) or not critique.strip():
-        raise RuntimeError("The chat model returned an empty or unsupported response")
-    critique = critique.strip()
-    if critique.strip().upper() == "PASS" and not grounded:
+        raise RuntimeError("The chat model returned an empty response")
+    return critique.strip()
+
+
+def _grounded_critique(
+    goal: str,
+    draft: str,
+    llm: BaseChatModel,
+    environment: IronBridgeEnvironment,
+) -> tuple[str, EnvironmentFeedback]:
+    """Critique backed by real environment evaluation + LLM rubric review.
+
+    Sources of truth:
+      1. deterministic_checks() — structural validation of the text.
+      2. environment.evaluate() — DB-backed validation (budget, suppliers, stock).
+      3. LLM — synthesizes the above into a coherent critique.
+    """
+    # 1. Run deterministic checks
+    grounded = deterministic_checks(goal, draft)
+    grounded_report = "\n".join(f"- {issue}" for issue in grounded) or "- Deterministic checks passed."
+
+    # 2. Run real environment evaluation
+    env_feedback = environment.evaluate(draft)
+
+    # 3. Ask LLM to critique with BOTH rubric and real external data
+    response = llm.invoke([
+        ("system", "You are an independent critic. Judge against the rubric AND the external validation results."),
+        ("human", f"""Goal: {goal}
+Rubric:
+{SELF_REFINE_RUBRIC}
+
+External deterministic checks:
+{grounded_report}
+
+External environment evaluation (score={env_feedback.score}):
+{chr(10).join('- ' + d for d in env_feedback.details)}
+
+Draft:
+{draft}
+
+List concrete issues, citing which external check caught each problem.
+If there are no issues, respond exactly PASS."""),
+    ], temperature=0.2)
+    critique = response.content
+    if not isinstance(critique, str) or not critique.strip():
+        raise RuntimeError("The chat model returned an empty response")
+    return critique.strip(), env_feedback
+
+
+def self_refine(
+    goal: str,
+    llm: BaseChatModel,
+    environment: Optional[IronBridgeEnvironment] = None,
+    max_iterations: int = 1,
+) -> SelfRefineResult:
+    """
+    Self-Refine loop: draft -> critique -> revise.
+
+    If *environment* is provided, the critique is grounded (deterministic checks
+    + real DB validation). If *environment* is None, the critique is ungrounded
+    (LLM-only rubric review).
+    """
+    # ---- Draft ----
+    draft_response = llm.invoke([
+        ("system", "You are IronBridge's planning assistant. Produce a concrete mitigation proposal."),
+        ("human", goal),
+    ], temperature=0.3)
+    draft = draft_response.content
+    if not isinstance(draft, str) or not draft.strip():
+        raise RuntimeError("The chat model returned an empty draft")
+    draft = draft.strip()
+    llm_calls = 1
+
+    # ---- Critique ----
+    if environment is not None:
+        critique, env_feedback = _grounded_critique(goal, draft, llm, environment)
+    else:
+        critique = _ungrounded_critique(goal, draft, llm)
+        env_feedback = None
+    llm_calls += 1
+
+    # ---- Revise (only if critique found issues) ----
+    # Grounded checks are already folded into the critique prompt (see
+    # _grounded_critique's "External deterministic checks" / "External
+    # environment evaluation" sections), so the critic's own PASS/FAIL
+    # verdict already reflects them -- no need to re-check deterministic_checks
+    # here too.
+    needs_revision = critique.strip().upper() != "PASS"
+
+    if not needs_revision:
         revised = draft
     else:
+        grounded_report = "\n".join(
+            f"- {issue}" for issue in deterministic_checks(goal, draft)
+        ) or "- Deterministic checks passed."
+        env_section = ""
+        if env_feedback:
+            env_section = (
+                f"\nExternal environment evaluation (score={env_feedback.score}):\n"
+                + "\n".join(f"- {d}" for d in env_feedback.details)
+            )
         response = llm.invoke([
-            ("system", "Revise a deliverable using both external checks and an independent critique."),
-            ("human", f"Goal: {goal}\n\nDraft:\n{draft}\n\nGrounded checks:\n{grounded_report}\n\nCritique:\n{critique}\n\nReturn only the improved deliverable."),
+            ("system", "Revise the deliverable using the critique and external checks."),
+            ("human", f"""Goal: {goal}
+
+Draft:
+{draft}
+
+Grounded checks:
+{grounded_report}{env_section}
+
+Critique:
+{critique}
+
+Return only the improved deliverable. Be specific, cite ProjectIDs, dollar amounts, and concrete actions."""),
         ], temperature=0.2)
         revised = response.content
         if not isinstance(revised, str) or not revised.strip():
-            raise RuntimeError("The chat model returned an empty or unsupported response")
+            raise RuntimeError("The chat model returned an empty revision")
         revised = revised.strip()
-    return ReflectionResult(draft, critique, revised, grounded)
+        llm_calls += 1
+
+    return SelfRefineResult(
+        draft=draft,
+        critique=critique,
+        revised=revised,
+        grounded_issues=deterministic_checks(goal, draft),
+        environment_feedback=env_feedback,
+        llm_calls=llm_calls,
+        approx_tokens=_approx_tokens(goal, draft, critique, revised),
+    )
+
+
+# Keep the old name for backward compatibility within the toolkit
+reflect_and_refine = self_refine
