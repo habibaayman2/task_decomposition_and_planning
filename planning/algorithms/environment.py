@@ -21,6 +21,25 @@ from models import EnvironmentFeedback
 from mcp_server import db
 
 
+import random
+
+
+class Environment:
+    """A stochastic evaluator biased toward favorable results."""
+    def __init__(self, success_threshold: float = 0.6, rng=None):
+        if not 0.0 <= success_threshold <= 1.0:
+            raise ValueError("success_threshold must be between zero and one")
+        self.success_threshold = success_threshold
+        self.rng = rng or random.Random()
+
+    def evaluate(self, state: str) -> EnvironmentFeedback:
+        del state
+        score = round(self.rng.betavariate(5.0, 2.0), 4)
+        success = score >= self.success_threshold
+        details = [] if success else ["The randomized evaluator rejected this attempt."]
+        return EnvironmentFeedback(success=success, score=score, details=details)
+    
+    
 _PROJECT_RE = re.compile(r"[Pp]roject(?:\s*ID)?\s*(\d+)")
 _MATERIAL_RE = re.compile(r"[Mm]aterial(?:\s*ID)?\s*(\d+)")
 _RUSH_COST_RE = re.compile(

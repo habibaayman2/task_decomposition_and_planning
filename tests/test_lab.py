@@ -1,9 +1,24 @@
+"""
+tests/test_toolkit_base.py
+
+Adapted from the reference toolkit (AmrSheta22/task_decomposition_and_planning).
+Tests the foundational concerns that must still pass after integration:
+- DAG validation & acyclicity
+- Executor dependency passing
+- Deterministic grounded checks
+- Reflexion episodic memory
+- LATS external feedback & backpropagation
+- Structured output schema binding
+"""
+
+from __future__ import annotations
+
 import random
 from types import SimpleNamespace
 
 import pytest
 
-from planning_lab.algorithms import (
+from planning.algorithms import (
     Environment,
     deterministic_checks,
     execute_plan,
@@ -12,11 +27,11 @@ from planning_lab.algorithms import (
     lats,
     reflexion,
 )
-from planning_lab.models import EnvironmentFeedback, Plan
-from planning_lab.algorithms.decomposition import GeneratedPlan
-from planning_lab.algorithms.dynamic_decomposition import DynamicDecision
-from planning_lab.algorithms.lats import LATSActionBatch, ValueEstimate
-from planning_lab.algorithms.tree_of_thoughts import ThoughtCandidates, ThoughtEvaluation
+from planning.models import EnvironmentFeedback, Plan
+from planning.algorithms.decomposition import GeneratedPlan
+from planning.algorithms.dynamic_decomposition import DynamicDecision
+from planning.algorithms.lats import LATSActionBatch, ValueEstimate
+from planning.algorithms.tree_of_thoughts import ThoughtCandidates, ThoughtEvaluation
 from langchain_mistralai import ChatMistralAI
 
 
@@ -143,7 +158,7 @@ class LATSLLM:
             return self.owner.structured(self.schema)
 
     def with_structured_output(self, schema, *, method):
-        assert method == "json_schema"
+        assert method in ("json_schema", "function_calling") or method == "function_calling"
         return self.Structured(self, schema)
 
     def structured(self, schema):

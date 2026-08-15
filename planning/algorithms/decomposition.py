@@ -141,7 +141,7 @@ def decompose_goal(
 
     generated = llm.with_structured_output(
         GeneratedPlan,
-        method="json_schema",
+        method="function_calling"
     ).invoke([
         ("system", PLANNER_SYSTEM),
         ("human", f"""Decompose this delay-risk request into 3-6 tasks: {goal!r}
