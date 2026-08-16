@@ -40,6 +40,15 @@ def _resolve_task_id(instruction: str) -> Optional[str]:
     return None
 
 
+def _normalize_task(text: str) -> str:
+    """Normalize task text for duplicate detection."""
+    lowered = text.lower().strip()
+    # Remove common filler words
+    for word in ["check", "the", "status", "of", "if", "is", "ready"]:
+        lowered = lowered.replace(word, "")
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
 def dynamic_decomposition(
     goal: str,
     llm: BaseChatModel,
@@ -50,16 +59,18 @@ def dynamic_decomposition(
     project_id = _extract_project_id(goal)
     context: dict[str, Any] = {"project_id": project_id, "goal": goal}
     history: list[tuple[str, str]] = []
+    seen_tasks: set[str] = set()  # Track normalized tasks to prevent loops
 
     # Step 0: Real diagnosis
     diag_output = executors["diagnose"](None, context, llm)
     history.append(("diagnose", diag_output))
     context["diagnose_result"] = diag_output
+    seen_tasks.add("diagnose")
 
     # Dynamic loop
     for step in range(1, max_steps + 1):
         observation = "\n".join(f"{task}: {result[:300]}" for task, result in history) or "None"
-        
+
         # Retry loop for Groq XML tag issues
         max_retries = 2
         last_err = None
@@ -69,17 +80,21 @@ def dynamic_decomposition(
                 "You see only what has actually happened so far — no future step is fixed. "
                 "Decide whether the delay-risk request is now fully resolved (done=true) "
                 "or propose exactly one next concrete sub-task grounded in the observed results. "
-                "Change course if an earlier observation makes the expected next step irrelevant."
+                "Change course if an earlier observation makes the expected next step irrelevant. "
+                "Do NOT repeat a task that has already been completed."
             )),
             ("human", f"""Goal: {goal}
 Completed work and observations:
 {observation}
 
+Already completed tasks: {', '.join(seen_tasks)}
+
 Decide the single best next task. Set done to true only when the goal is met.
 When done is true, use an empty string for next_task.
+Do NOT propose a task that is already in the 'Already completed tasks' list above.
 Respond with ONLY the JSON fields defined by the schema — no extra keys, no explanation."""),
         ]
-        
+
         for attempt in range(max_retries + 1):
             try:
                 structured = llm.with_structured_output(DynamicDecision, method="function_calling")
@@ -94,13 +109,21 @@ Respond with ONLY the JSON fields defined by the schema — no extra keys, no ex
                 ))
                 if attempt < max_retries:
                     time.sleep(0.5 * (attempt + 1))
-        else:
-            raise last_err
+                else:
+                    raise last_err
 
         if decision.done or not decision.next_task.strip():
             break
 
         task_text = decision.next_task.strip()
+        normalized = _normalize_task(task_text)
+
+        # CYCLE DETECTION: if we've seen this task before, stop
+        if normalized in seen_tasks:
+            history.append((task_text, f"[STOPPED: task '{task_text}' was already completed earlier]"))
+            break
+
+        seen_tasks.add(normalized)
         task_id = _resolve_task_id(task_text)
 
         if task_id and task_id in executors:

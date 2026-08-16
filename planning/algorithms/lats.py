@@ -12,8 +12,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field
 
 # Direct absolute/module imports relative to the newly added path root
-from models import EnvironmentFeedback
-from environment import IronBridgeEnvironment
+from ..models import EnvironmentFeedback
+from .environment import IronBridgeEnvironment
 
 
 class LATSAction(BaseModel):
@@ -244,7 +244,7 @@ Explain briefly why this branch failed and how a later expansion should change."
         def _count_pruned(node: LATSNode):
             nonlocal pruned_count
             for child in node.children:
-                if child.score < prune_threshold:
+                if child.environment_score < prune_threshold:
                     pruned_count += 1
                 _count_pruned(child)
         _count_pruned(root)

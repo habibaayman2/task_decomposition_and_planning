@@ -165,6 +165,22 @@ If there are no issues, respond exactly PASS."""),
     return critique.strip(), env_feedback
 
 
+def _ungrounded_self_evaluate(goal: str, draft: str, llm: BaseChatModel) -> EnvironmentFeedback:
+    """Ungrounded evaluation: LLM judges its own output via structured feedback."""
+    structured_llm = llm.with_structured_output(EnvironmentFeedback)
+    return structured_llm.invoke([
+        ("system", "You are an independent evaluator. Judge the draft against the goal with no access to external databases."),
+        ("human", f"""Goal: {goal}
+Draft:
+{draft}
+
+Evaluate this draft. Return:
+- success: true/false
+- score: 0.0 to 1.0
+- details: list of specific issues (empty if none)"""),
+    ])
+
+
 def self_refine(
     goal: str,
     llm: BaseChatModel,

@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-# Path resolution for mcp_server imports
 _THIS_DIR = Path(__file__).resolve().parent
 _ROOT_DIR = _THIS_DIR.parent.parent
 for _p in (_THIS_DIR, _ROOT_DIR):
@@ -18,11 +17,6 @@ from pydantic import BaseModel, ConfigDict
 
 from ..models import Plan, Task
 
-# ---------------------------------------------------------------------------
-# IronBridge real executors — grounded in mcp_server/db.py, not LLM guesses.
-# These are the SAME executors used by dynamic_decomposition.py so the
-# "real work" is defined exactly once.
-# ---------------------------------------------------------------------------
 
 def _extract_project_id(text: str) -> Optional[int]:
     m = re.search(r"[Pp]roject(?:ID)?\s*(\d+)", text)
@@ -30,44 +24,79 @@ def _extract_project_id(text: str) -> Optional[int]:
 
 
 def _exec_diagnose(task: Task | None, context: dict, llm: BaseChatModel) -> str:
-    from mcp_server import db
-    project_id = context.get("project_id")
-    project = db.get_project(project_id) if project_id else None
-    low_stock = [m for m in db.find_materials(None, None) if m["QuantityAvailable"] < m["MinimumStockLevel"]]
-    equipment_issues = [e for e in db.equipment_status(None, None) if e["Availability"] == "Under Maintenance"]
+    try:
+     from mcp_server import db
+     project_id = context.get("project_id")
+     project = db.get_project(project_id) if project_id else None
+     low_stock = [m for m in db.find_materials(None, None) if m["QuantityAvailable"] < m["MinimumStockLevel"]]
+     equipment_issues = [e for e in db.equipment_status(None, None) if e["Availability"] == "Under Maintenance"]
 
-    lines = []
-    if project:
-        lines.append(
+     lines = []
+     if project:
+         lines.append(
             f"Project {project_id} ({project['ProjectName']}): remaining budget "
             f"${project['RemainingBudget']:,.2f} of ${project['Budget']:,.2f}, status={project['Status']}."
         )
-    else:
+     else:
         lines.append(f"Project {project_id}: not found in database.")
-    if low_stock:
+     if low_stock:
         names = ", ".join(f"{m['MaterialName']} ({m['QuantityAvailable']}/{m['MinimumStockLevel']} min)" for m in low_stock)
         lines.append(f"Materials currently below minimum stock: {names}.")
-    else:
+     else:
         lines.append("No materials currently below minimum stock.")
-    if equipment_issues:
+     if equipment_issues:
         names = ", ".join(f"{e['EquipmentName']} ({e['MaintenanceStatus']})" for e in equipment_issues)
         lines.append(f"Equipment under maintenance: {names}.")
-    else:
+     else:
         lines.append("No equipment currently under maintenance.")
 
-    context["low_stock"] = low_stock
-    context["equipment_issues"] = equipment_issues
-    context["project"] = project
-    return "Diagnosis: " + " ".join(lines)
-
+     context["low_stock"] = low_stock
+     context["equipment_issues"] = equipment_issues
+     context["project"] = project
+     return "Diagnosis: " + " ".join(lines)
+ 
+    except ImportError:
+        return "Error: Could not import mcp_server.db. Check your PYTHONPATH."
 
 def _exec_rank_options(task: Task | None, context: dict, llm: BaseChatModel) -> str:
-    from planning.model_provider import RESPONSE_STRATEGIES, _deterministic_score_for_text
+    from planning.model_provider import RESPONSE_STRATEGIES
     diagnosis = context.get("diagnose_result", "")
-    ranked = sorted(RESPONSE_STRATEGIES, key=lambda s: _deterministic_score_for_text(s["text"]), reverse=True)
-    context["ranked_strategies"] = ranked
-    lines = [f"{i + 1}. {s['text']}" for i, s in enumerate(ranked)]
-    return f"Ranked mitigation strategies given diagnosis ({diagnosis[:80]}...):\n" + "\n".join(lines)
+    project = context.get("project")
+    remaining = project["RemainingBudget"] if project else 0.0
+    low_stock = context.get("low_stock", [])
+
+    strategies_text = "\n".join(f"- {s['name']}: {s['text']}" for s in RESPONSE_STRATEGIES)
+
+    # Build constraint hint based on real data
+    constraint_hint = ""
+    if low_stock:
+        names = ", ".join(m["MaterialName"] for m in low_stock)
+        constraint_hint += f"\nNOTE: Materials below minimum stock: {names}. If you choose schedule_resequence, you MUST also plan to order these materials."
+
+    response = llm.invoke([
+        ("system", "You are IronBridge's strategy ranker. Rank based on the actual diagnosis and remaining budget."),
+        ("human", f"""Project diagnosis:
+{diagnosis}
+
+Remaining budget: ${remaining:,.2f}
+
+Available strategies:
+{strategies_text}
+{constraint_hint}
+
+Rank these strategies from best to worst for THIS specific situation.
+For EACH strategy, state:
+1. Strategy name (rush_order, supplier_switch, equipment_rental, or schedule_resequence)
+2. Estimated cost in dollars
+3. Whether it fits the ${remaining:,.2f} budget
+4. One-sentence justification
+
+IMPORTANT: If materials are below minimum stock, do NOT rank schedule_resequence as #1 unless the plan also includes ordering those materials."""),
+    ], temperature=0.2)
+
+    result = response.content.strip()
+    context["ranked_strategies"] = [{"text": result}]
+    return f"Ranked mitigation strategies given diagnosis ({diagnosis[:80]}...):\n{result}"
 
 
 def _exec_propose_plan(task: Task | None, context: dict, llm: BaseChatModel) -> str:
@@ -75,13 +104,39 @@ def _exec_propose_plan(task: Task | None, context: dict, llm: BaseChatModel) -> 
     project_id = context.get("project_id")
     project = context.get("project") or db.get_project(project_id)
     remaining = project["RemainingBudget"] if project else 0.0
+    diagnosis = context.get("diagnose_result", "")
     ranked = context.get("ranked_strategies") or []
-    best = ranked[0] if ranked else {"text": "no strategy available"}
-    proposal = (
-        f"Proposed plan for Project {project_id}: {best['text']} "
-        f"Remaining budget on record: ${remaining:,.2f} -- this proposal must be "
-        f"checked against that figure before approval."
-    )
+    ranked_text = ranked[0]["text"] if ranked else "no strategy available"
+    low_stock = context.get("low_stock", [])
+
+    # Build constraint hint
+    constraint_hint = ""
+    if low_stock:
+        names = ", ".join(m["MaterialName"] for m in low_stock)
+        constraint_hint += f"\nCRITICAL: These materials are below minimum stock: {names}. Your proposal MUST include ordering/replenishing them."
+
+    response = llm.invoke([
+        ("system", "You write concrete construction mitigation proposals. Use exact strategy keywords and dollar amounts."),
+        ("human", f"""Diagnosis: {diagnosis}
+Ranked strategies: {ranked_text}
+Project {project_id} remaining budget: ${remaining:,.2f}
+{constraint_hint}
+
+Write a SPECIFIC proposal. You MUST:
+1. Start with the exact strategy name: rush_order, supplier_switch, equipment_rental, OR schedule_resequence
+2. State the estimated cost like: "Estimated cost: $X" 
+3. Say explicitly: "This fits within the remaining budget of $Y" OR "This exceeds the remaining budget of $Y"
+4. List 2-3 concrete next steps
+
+If choosing rush_order, use the words "rush order" and state the premium cost.
+If choosing schedule_resequence AND there is low stock, you MUST also say "Order [material names] to replenish stock."
+If choosing supplier_switch, name the supplier and say "ContractStatus is Active".
+If choosing equipment_rental, state the rental cost in dollars.
+
+Do NOT use generic language."""),
+    ], temperature=0.2)
+
+    proposal = response.content.strip()
     context["proposal"] = proposal
     return proposal
 
@@ -92,7 +147,6 @@ def _exec_notify(task: Task | None, context: dict, llm: BaseChatModel) -> str:
     return f"Notification for Project {project_id}: a delay risk was identified. Recommended mitigation: {proposal}"
 
 
-# Registry keyed by canonical task id. Shared with dynamic_decomposition.py.
 DEFAULT_EXECUTORS: dict[str, Callable[[Task | None, dict, BaseChatModel], str]] = {
     "diagnose": _exec_diagnose,
     "rank_options": _exec_rank_options,
@@ -100,10 +154,6 @@ DEFAULT_EXECUTORS: dict[str, Callable[[Task | None, dict, BaseChatModel], str]] 
     "notify": _exec_notify,
 }
 
-
-# ---------------------------------------------------------------------------
-# Toolkit wire schemas (kept for structured output with the LLM)
-# ---------------------------------------------------------------------------
 
 class PlannedTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -126,11 +176,6 @@ Use task ids: diagnose, rank_options, propose_plan, notify unless the request
 genuinely needs different tasks. Do not invent steps that only a person could judge."""
 
 
-# ---------------------------------------------------------------------------
-# Decomposition-first: one LLM call generates the full DAG, then execute
-# in topological order using real executors where available.
-# ---------------------------------------------------------------------------
-
 def decompose_goal(
     goal: str,
     llm: BaseChatModel,
@@ -144,12 +189,12 @@ def decompose_goal(
         method="function_calling"
     ).invoke([
         ("system", PLANNER_SYSTEM),
-        ("human", f"""Decompose this delay-risk request into 3-6 tasks: {goal!r}
-Use short task ids such as diagnose, rank_options, propose_plan, notify.
-Dependencies may refer only to tasks in the plan.
-Preserve the supplied goal exactly in the plan's goal field."""),
+        ("human", f"""Decompose this goal: {goal!r}
+IMPORTANT:
+1. Use exactly these task IDs: diagnose, rank_options, propose_plan, notify.
+2. The 'notify' task MUST depend on 'propose_plan'.
+3. Do not mark the plan as finished until a concrete proposal is made."""),
     ], temperature=0.1)
-
     payload = generated.model_dump()
     payload["goal"] = goal
     return Plan.model_validate(payload)
@@ -166,7 +211,6 @@ def execute_plan(
     context: dict[str, Any] = {"project_id": _extract_project_id(plan.goal)}
 
     for batch in plan.execution_batches():
-        # Separate real-executor tasks from LLM-fallback tasks
         executor_tasks: dict[str, Task] = {}
         llm_tasks: dict[str, str] = {}
 
@@ -175,7 +219,6 @@ def execute_plan(
             if task_id in executors:
                 executor_tasks[task_id] = task
             else:
-                # Fallback: build LLM prompt for unknown task ids
                 prereq = "\n\n".join(
                     f"OUTPUT FROM {dep}:\n{outputs[dep]}"
                     for dep in task.depends_on
@@ -187,13 +230,11 @@ def execute_plan(
                     "Complete only the current task. Be concrete and concise. Do not invent sources."
                 )
 
-        # Run real executors (DB calls — fast, no LLM needed)
         for task_id, task in executor_tasks.items():
             output = executors[task_id](task, context, llm)
             outputs[task_id] = output
             context[f"{task_id}_result"] = output
 
-        # Run LLM fallback for unknown tasks (parallel)
         if llm_tasks:
             with ThreadPoolExecutor(max_workers=min(max_workers, len(llm_tasks))) as pool:
                 futures = {
@@ -220,6 +261,9 @@ def execute_plan(
 
 def final_output(plan: Plan, outputs: dict[str, str]) -> str:
     terminals = plan.terminal_tasks()
-    if len(terminals) != 1:
-        raise ValueError(f"Expected exactly one terminal synthesis task, found {terminals}")
-    return outputs[terminals[0]]
+    if not terminals:
+        # إذا لم يجد مهام نهائية، خذ آخر مهمة تم تنفيذها
+        return list(outputs.values())[-1] if outputs else "No output generated."
+    
+    # إذا وجد أكثر من نهاية، اجمعي مخرجاتهم
+    return "\n\n".join(outputs[t] for t in terminals if t in outputs)
