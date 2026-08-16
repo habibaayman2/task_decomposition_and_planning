@@ -15,12 +15,12 @@ from pydantic import BaseModel
 
 from dotenv import load_dotenv
 load_dotenv()
-# Resolve project root for cross-module imports
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-GROQ_MODEL = os.environ.get("GROQ_MODEL",  "llama-3.1-8b-instant")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 
 _warned = False
 
@@ -131,78 +131,57 @@ class _StructuredOutputRunnable(Runnable):
         return str(input)
 
 
-class GroqFallbackWrapper:
-    def invoke(self, input_messages: Any, **kwargs: Any):
-        class DummyResponse:
-            content = "Groq Plan Step 1: Analyze project constraints.\nGroq Plan Step 2: Execute solution."
-        return DummyResponse()
-
-    def with_structured_output(self, schema: Type[BaseModel], **kwargs: Any):
-        class StructuredRunnable:
-            def invoke(self, input_messages: Any, config: Optional[dict] = None, **kwargs: Any) -> Any:
-                return _fake_structured_response(schema, str(input_messages), 1)
-        return StructuredRunnable()
-
-
 def _fake_structured_response(schema: Type[BaseModel], prompt_text: str, call_count: int) -> BaseModel:
-    fields = set(schema.model_fields.keys())
     ctx = _extract_ironbridge_context(prompt_text)
+    schema_name = schema.__name__
 
-    # GeneratedPlan (decomposition.py): goal, tasks
-    if fields == {"goal", "tasks"}:
+    if schema_name in ("GeneratedPlan", "_GeneratedPlan"):
         return _fake_generated_plan(schema, prompt_text, ctx)
 
-    # DynamicDecision (dynamic_decomposition.py): done, next_task
-    if fields == {"done", "next_task"}:
+    if schema_name in ("DynamicDecision", "_DynamicDecision"):
         step = call_count
         if step > len(RESPONSE_STRATEGIES):
             return schema(done=True, next_task="")
         strat = RESPONSE_STRATEGIES[step - 1]
         return schema(done=False, next_task=strat["text"])
 
-    # ThoughtCandidates (tree_of_thoughts.py): candidates
-    if fields == {"candidates"}:
+    if schema_name in ("ThoughtCandidates", "_ThoughtCandidates"):
         idx = (call_count - 1) * 2 % len(RESPONSE_STRATEGIES)
         picks = [RESPONSE_STRATEGIES[idx]["text"], RESPONSE_STRATEGIES[(idx + 1) % len(RESPONSE_STRATEGIES)]["text"]]
         return schema(candidates=picks)
 
-    # ThoughtEvaluationItem (tree_of_thoughts.py batch): candidate_index, score, rationale
-    if fields == {"candidate_index", "score", "rationale"}:
+    if schema_name in ("ThoughtEvaluationItem", "ThoughtEvaluation", "_ThoughtEvaluation"):
         score = _deterministic_score_for_text(prompt_text)
-        return schema(candidate_index=0, score=score, rationale=f"deterministic heuristic score ({score:.2f})")
+        return schema(score=score, rationale=f"deterministic heuristic score ({score:.2f})")
 
-    # ThoughtEvaluations (tree_of_thoughts.py batch wrapper): evaluations
-    if fields == {"evaluations"}:
-        item_cls = schema.model_fields["evaluations"].annotation.__args__[0]
+    if schema_name in ("ThoughtEvaluations", "_ThoughtEvaluations"):
+        from planning.algorithms.tree_of_thoughts import ThoughtEvaluationItem
         score = _deterministic_score_for_text(prompt_text)
         return schema(evaluations=[
-            item_cls(candidate_index=0, score=score, rationale=f"batch eval score ({score:.2f})")
+            ThoughtEvaluationItem(candidate_index=0, score=score, rationale=f"batch eval score ({score:.2f})")
         ])
 
-    # LATSAction (lats.py): action, state
-    if fields == {"action", "state"}:
+    if schema_name in ("LATSAction", "_LATSAction"):
         idx = (call_count - 1) % len(RESPONSE_STRATEGIES)
         strat = RESPONSE_STRATEGIES[idx]
         return schema(action=strat["name"], state=strat["text"])
 
-    # LATSActionBatch (lats.py): actions
-    if fields == {"actions"}:
+    if schema_name in ("LATSActionBatch", "_LATSActionBatch"):
         action_cls = schema.model_fields["actions"].annotation.__args__[0]
         actions = [action_cls(action=s["name"], state=s["text"]) for s in RESPONSE_STRATEGIES[:2]]
         return schema(actions=actions)
 
-    # ValueEstimate (lats.py): score
-    if fields == {"score"}:
+    if schema_name in ("ValueEstimate", "_ValueEstimate"):
         return schema(score=_deterministic_score_for_text(prompt_text))
 
-    # EnvironmentFeedback
-    if fields == {"success", "score", "details"}:
-        return schema(success=True, score=0.5, details=["deterministic fallback -- no real evaluation performed"])
+    if schema_name in ("EnvironmentFeedback", "_EnvironmentFeedback"):
+        return schema(success=True, score=0.5, details=["deterministic fallback"])
 
     raise NotImplementedError(
-        f"DeterministicPlanningLLM has no fake generator for a schema with fields {fields}. "
+        f"DeterministicPlanningLLM has no fake generator for schema '{schema_name}'. "
         "Add a case in planning/model_provider.py::_fake_structured_response."
     )
+
 
 def _deterministic_score_for_text(text: str) -> float:
     lowered = text.lower()
@@ -253,17 +232,17 @@ def _fake_freetext_response(prompt_text: str) -> str:
 
     if "critique" in lowered or "review" in lowered:
         return (
-            "The draft is directionally correct but doesn't explicitly confirm the proposed cost "
-            "stays within the project's remaining budget -- add an explicit budget check."
+            "The draft is directionally correct but doesn\'t explicitly confirm the proposed cost "
+            "stays within the project\'s remaining budget -- add an explicit budget check."
         )
     if "revise" in lowered or "improve" in lowered:
         return (
             "Revised: the plan now explicitly states the estimated cost and confirms it against "
-            "the project's remaining budget before recommending the mitigation strategy."
+            "the project\'s remaining budget before recommending the mitigation strategy."
         )
     if "reflect" in lowered:
         return (
-            "Reflection: the prior attempt didn't check the real remaining budget before proposing "
+            "Reflection: the prior attempt didn\'t check the real remaining budget before proposing "
             "a rush order; check it before proposing next time."
         )
 
@@ -325,19 +304,17 @@ def _propose_plan(project_id: int) -> str:
 def get_planning_llm() -> BaseChatModel:
     if has_real_llm():
         try:
-            from dotenv import load_dotenv
             from langchain_groq import ChatGroq
-            load_dotenv()
             model_name = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
             return ChatGroq(
                 model=model_name,
-                groq_api_key=os.environ["GROQ_API_KEY"],
+                api_key=os.environ["GROQ_API_KEY"],
                 temperature=0.2,
             )
         except ImportError:
             print(
                 "[Warning] GROQ_API_KEY is set, but 'langchain_groq' is not installed. "
-                "Falling back to DeterministicPlanningLLM."
+                "Install it with: pip install langchain-groq"
             )
     _warn_once()
     return DeterministicPlanningLLM(call_count=[0])

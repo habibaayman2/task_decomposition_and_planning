@@ -1,5 +1,11 @@
-langchain-mistralai>=1.1,<2
-networkx>=3.4,<3.5
-python-dotenv>=1.0,<2
-pydantic>=2.7,<3
-pytest>=8,<9
+# Core
+pydantic>=2.0
+networkx>=3.0
+python-dotenv>=1.0
+
+# LangChain
+langchain-core>=0.3.0
+langchain-groq>=0.2.0
+
+# Testing
+pytest>=8.0
