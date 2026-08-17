@@ -21,7 +21,9 @@ context so downstream tasks can build on upstream results.
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
+from typing import Optional
 
 _THIS_DIR = Path(__file__).resolve().parent
 _ROOT_DIR = _THIS_DIR.parent
@@ -71,6 +73,7 @@ def route_subtask(
     instruction: str,
     llm: BaseChatModel,
     context: dict,
+    session_id: Optional[str] = None,
 ) -> dict:
     """Route a single DAG sub-task to the algorithm whose shape fits it.
 
@@ -79,6 +82,10 @@ def route_subtask(
         instruction: The task instruction text.
         llm: The language model instance.
         context: Mapping of prerequisite task_id -> output string.
+        session_id: Groups this task's self_refine episodic-memory writes
+            with the rest of the plan's draft_* tasks (see execute_routed_plan).
+            Passed straight through to self_refine(); ignored by every other
+            branch below.
 
     Returns:
         A dict with keys:
@@ -174,7 +181,12 @@ def route_subtask(
     # 5. DRAFT_* — cheap to redo, benefits from critique + revision
     # ------------------------------------------------------------------
     elif task_id.startswith("draft_"):
-        res = self_refine(goal=instruction, llm=llm, environment=env)
+        res = self_refine(
+            goal=instruction,
+            llm=llm,
+            environment=env,
+            session_id=session_id or "planning-router",
+        )
         fb = res.environment_feedback
         return {
             "method": "Self-Refine",
@@ -183,6 +195,8 @@ def route_subtask(
             "success": fb.success if fb else False,
             "score": fb.score if fb else 0.0,
             "llm_calls": res.llm_calls,
+            "episode_id": res.episode_id,
+            "recalled_lessons": res.recalled_lessons,
         }
 
     # ------------------------------------------------------------------
@@ -222,7 +236,7 @@ def route_subtask(
         }
 
 
-def execute_routed_plan(plan, llm: BaseChatModel) -> dict[str, dict]:
+def execute_routed_plan(plan, llm: BaseChatModel, session_id: Optional[str] = None) -> dict[str, dict]:
     """Execute a full Plan DAG with routing.
 
     Iterates through execution_batches (topological generations) and routes
@@ -232,10 +246,16 @@ def execute_routed_plan(plan, llm: BaseChatModel) -> dict[str, dict]:
     Args:
         plan: A validated Plan instance.
         llm: The language model.
+        session_id: Shared across every draft_* task in this plan so their
+            self_refine() episodic-memory writes land under one session and
+            can recall each other. Defaults to a fresh UUID per call; pass
+            an explicit, stable id (e.g. per-project) to let a later
+            execute_routed_plan() call recall this run's lessons too.
 
     Returns:
         Mapping of task_id -> result dict (from route_subtask).
     """
+    session_id = session_id or str(uuid.uuid4())
     results: dict[str, dict] = {}
 
     for batch in plan.execution_batches():
@@ -254,6 +274,7 @@ def execute_routed_plan(plan, llm: BaseChatModel) -> dict[str, dict]:
                 instruction=task.instruction,
                 llm=llm,
                 context=context,
+                session_id=session_id,
             )
             results[task_id] = result
 
