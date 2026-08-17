@@ -1,16 +1,17 @@
 """
-agent/agent.py
+agent/planning_agent.py
 
 Interactive IronBridge procurement agent with Week 4 Planning Agent integration.
 
 The planning agent sits alongside (not replacing) the memory/RAG agent:
   - Policy questions         -> RAG retrieval
   - Procurement lookups      -> MCP tools
-  - Delay/risk/mitigation    -> Planning Agent (decomposition -> planning -> self-correction)
+  - Delay/risk/mitigation    -> Planning Agent (decomposition -> routed planning -> self-correction)
 
 Usage:
   export GROQ_API_KEY=...
-  python3 agent/agent.py
+  # Run from the repo root as a module (adds repo root to sys.path via -m):
+  python -m agent.planning_agent
 
 Try:
   "What steel do we have in stock?"              -> MCP tools
@@ -26,19 +27,28 @@ import json
 import os
 import sys
 
-from dotenv import load_dotenv
-
+# ---------------------------------------------------------------------------
+# Path setup MUST happen before any repo-local absolute imports
+# (planning.*, memory.*, rag.*, mcp_client). Not strictly required when
+# running via `python -m agent.planning_agent` from the repo root (which
+# already puts the repo root on sys.path), but doing this setup after those
+# imports would break a direct `python3 agent/planning_agent.py` invocation,
+# since Python only puts the *script's own* directory on sys.path
+# automatically in that case, not the repo root. Kept first defensively so
+# both invocation styles work.
+# ---------------------------------------------------------------------------
 sys.path.insert(0, os.path.dirname(__file__))
-import mcp_client
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTEXT_EVAL_DIR = os.path.join(REPO_ROOT, "context_eval")
+for _path in (REPO_ROOT, CONTEXT_EVAL_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-for path in (REPO_ROOT, CONTEXT_EVAL_DIR):
-    if path not in sys.path:
-        sys.path.insert(0, path)
+from dotenv import load_dotenv
 
 load_dotenv(os.path.join(REPO_ROOT, ".env"))
+
+import mcp_client
 
 import uuid
 from memory.short_term import SessionMemory
@@ -53,10 +63,14 @@ from rag.agentic_rag import agentic_rag_answer
 # ---------------------------------------------------------------------------
 # Planning Agent Integration (Week 4 — Delay-Response Planning)
 # ---------------------------------------------------------------------------
+from planning.algorithms.self_refine import self_refine
 from planning.algorithms.dynamic_decomposition import dynamic_decomposition
-from planning.algorithms.decomposition import decompose_goal, execute_plan, final_output
+from planning.algorithms.decomposition import decompose_goal, final_output
 from planning.algorithms.environment import IronBridgeEnvironment
-from planning.model_provider import get_planning_llm as get_planning_llm
+from planning.model_provider import get_planning_llm
+from planning.router import execute_routed_plan  # <-- routes rank_options -> ToT,
+                                                   #     propose_plan -> LATS, instead
+                                                   #     of the plain-LLM DEFAULT_EXECUTORS
 
 PLANNING_KEYWORDS = [
     "delay", "risk", "mitigate", "recovery plan", "resequence",
@@ -149,37 +163,66 @@ def prepare_pruned_messages(messages: list[dict], keep_last_n_tool_outputs: int 
 # ---------------------------------------------------------------------------
 # Planning Agent Runner
 # ---------------------------------------------------------------------------
-async def run_planning_agent(user_text: str) -> str:
-    """Week 4: Run the delay-response planning agent.
-
-    Routes vague requests through dynamic decomposition (reacts to real DB data)
-    and clear requests through decomposition-first (static plan is sufficient).
-    Final output is checked against IronBridgeEnvironment.
+async def run_planning_agent(user_text: str, episodic_memory: list[str] = None) -> str:
+    """
+    Week 4 Integration:
+    1. Decompose (decomposition-first / dynamic, chosen by request shape)
+    2. Route + execute each sub-task through the algorithm that fits it
+       (diagnose -> direct, rank_options -> Tree-of-Thoughts,
+        propose_plan -> LATS, notify -> Plan-and-Solve) via planning.router
+    3. Evaluate the combined result (grounded, real DB check)
+    4. Self-Refine if the grounded check is weak
     """
     planning_llm = get_planning_llm()
     env = IronBridgeEnvironment(success_threshold=0.6)
 
-    # Heuristic: if the request is vague (no specific cause mentioned), use dynamic
-    vague = not any(word in user_text.lower() for word in
-                    ["rebar", "concrete", "steel", "equipment", "budget", "supplier"])
+    memory_context = "\n".join(episodic_memory) if episodic_memory else "No prior trial memory."
 
-    if vague:
-        print(" [PLANNING] Request is vague — using dynamic decomposition...")
-        history = dynamic_decomposition(user_text, llm=planning_llm)
-        output_lines = [f"Step {i+1}. [{instr}]\n{out}" for i, (instr, out) in enumerate(history)]
-        output = "\n\n".join(output_lines)
+    is_vague = not any(
+        word in user_text.lower()
+        for word in ["rebar", "concrete", "steel", "excavator", "budget", "supplier"]
+    )
+
+    if is_vague:
+        print(" [PLANNING] Vague request detected — using Dynamic Decomposition...")
+        history = dynamic_decomposition(f"{user_text}\nContext: {memory_context}", llm=planning_llm)
+        raw_output = "\n\n".join([f"Task: {instr}\nResult: {out}" for instr, out in history])
     else:
-        print(" [PLANNING] Request has clear shape — using decomposition-first...")
+        print(" [PLANNING] Clear shape detected — using Decomposition-first (Static DAG)...")
         plan = decompose_goal(user_text, llm=planning_llm)
-        outputs = execute_plan(plan, llm=planning_llm)
-        output = final_output(plan, outputs)
 
-    # Grounded final check
-    fb = env.evaluate(output)
-    output += f"\n\n[Grounded check] Score: {fb.score} | Success: {fb.success}"
-    if not fb.success:
-        output += f"\nIssues: {fb.details}"
-    return output
+        # Route each sub-task to the algorithm that actually fits its shape
+        # (this is what exercises Tree-of-Thoughts on rank_options and LATS
+        # on propose_plan — execute_plan()'s DEFAULT_EXECUTORS alone would
+        # only ever make plain LLM calls).
+        results = execute_routed_plan(plan, planning_llm)
+        for task_id, result in results.items():
+            print(f" [PLANNING] {task_id} -> {result['method']} "
+                  f"(success={result['success']}, score={result['score']:.2f})")
+        raw_output = final_output(plan, {tid: r["output"] for tid, r in results.items()})
+
+    print(" [PLANNING] Running Grounded Evaluation against IronBridge DB...")
+    feedback = env.evaluate(raw_output)
+
+    if not feedback.success or feedback.score < 0.5:
+        print(f" [PLANNING] Grounded check failed (Score: {feedback.score}). Triggering Self-Refine...")
+        refinement_result = self_refine(goal=user_text, llm=planning_llm, environment=env)
+        final_result = refinement_result.revised
+        final_fb = env.evaluate(final_result)
+    else:
+        print(f" [PLANNING] Grounded check passed (Score: {feedback.score}).")
+        final_result = raw_output
+        final_fb = feedback
+
+    response_header = "### IronBridge Planning Agent Response\n"
+    grounding_footer = (
+        f"\n\n---\n**Grounded Safety Check:**\n"
+        f"- Success: {'✅' if final_fb.success else '❌'}\n"
+        f"- Confidence Score: {final_fb.score:.2f}\n"
+        f"- DB Observations: {', '.join(final_fb.details) if final_fb.details else 'All checks passed.'}"
+    )
+
+    return response_header + final_result + grounding_footer
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +289,12 @@ async def run_agent(transport: str, http_url: str | None, http_token: str | None
             if _is_planning_request(user_text):
                 print(" [PLANNING] Routing to Delay-Response Planning Agent...")
                 try:
-                    planning_output = await run_planning_agent(user_text)
+                    recalled_memories = [e.content for e in episodic_store.recall(session_id=session_id)]
+                    planning_output = await run_planning_agent(user_text, recalled_memories)
+
                     print(f"assistant> {planning_output}")
                     conversation.append({"role": "assistant", "content": planning_output})
-                    evicted = session_mem.add_turn("assistant", planning_output)
-                    if evicted:
-                        router.route(evicted)
+                    session_mem.add_turn("assistant", planning_output)
                     continue
                 except Exception as e:
                     print(f" [PLANNING ERROR] {type(e).__name__}: {e}")
