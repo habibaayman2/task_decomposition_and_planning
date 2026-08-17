@@ -33,8 +33,10 @@ def test_router():
         print(f"\n[{task_id}] {instruction}")
         try:
             result = route_subtask(task_id, instruction, llm, context)
-            print(f"  Status: OK")
-            print(f"  Output preview: {result[:120]}...")
+            assert isinstance(result, dict), "route_subtask must return a dict"
+            assert "output" in result and "method" in result, "missing expected keys"
+            print(f"  Status: OK  | method={result['method']}")
+            print(f"  Output preview: {result['output'][:120]}...")
         except Exception as e:
             print(f"  Status: FAIL ❌")
             print(f"  Error: {type(e).__name__}: {e}")
@@ -46,6 +48,8 @@ def test_router():
     else:
         print("SOME TESTS FAILED ❌")
     print("=" * 60)
+
+    assert all_passed, "One or more router smoke-test cases failed — see output above"
 
 
 if __name__ == "__main__":
