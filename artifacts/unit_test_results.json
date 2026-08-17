@@ -1,0 +1,93 @@
+{
+  "summary": {
+    "total_tests": 14,
+    "passed": 10,
+    "failed": 4
+  },
+  "tests": [
+    {
+      "test_name": "test_environment_accepts_in_budget_plan",
+      "status": "PASSED",
+      "duration_sec": 0.001,
+      "error": null
+    },
+    {
+      "test_name": "test_environment_cache",
+      "status": "PASSED",
+      "duration_sec": 0.0,
+      "error": null
+    },
+    {
+      "test_name": "test_environment_rejects_over_budget_rush",
+      "status": "PASSED",
+      "duration_sec": 0.0,
+      "error": null
+    },
+    {
+      "test_name": "test_environment_score_bounds",
+      "status": "PASSED",
+      "duration_sec": 0.0,
+      "error": null
+    },
+    {
+      "test_name": "test_lats_execution",
+      "status": "FAILED",
+      "duration_sec": 31.5463,
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\tests\\test_eval.py\", line 422, in test_lats_execution\n    self.assertTrue(\nAssertionError: False is not true : LATS output lacks expected keywords. Got: negotiated_price\n"
+    },
+    {
+      "test_name": "test_lats_invalid_params",
+      "status": "PASSED",
+      "duration_sec": 0.0,
+      "error": null
+    },
+    {
+      "test_name": "test_lats_tree_flattening",
+      "status": "PASSED",
+      "duration_sec": 0.0,
+      "error": null
+    },
+    {
+      "test_name": "test_lats_with_pruning",
+      "status": "FAILED",
+      "duration_sec": 40.3741,
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\tests\\test_eval.py\", line 432, in test_lats_with_pruning\n    result = lats(\n             ^^^^^\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\lats.py\", line 250, in lats\n    _count_pruned(root)\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\lats.py\", line 247, in _count_pruned\n    if child.score < prune_threshold:\n       ^^^^^^^^^^^\nAttributeError: 'LATSNode' object has no attribute 'score'\n"
+    },
+    {
+      "test_name": "test_plan_and_solve_empty_response_error",
+      "status": "PASSED",
+      "duration_sec": 0.0318,
+      "error": null
+    },
+    {
+      "test_name": "test_plan_and_solve_execution",
+      "status": "PASSED",
+      "duration_sec": 1.3097,
+      "error": null
+    },
+    {
+      "test_name": "test_plan_and_solve_retry_on_failure",
+      "status": "PASSED",
+      "duration_sec": 0.0121,
+      "error": null
+    },
+    {
+      "test_name": "test_tree_of_thoughts_batch_evaluation",
+      "status": "FAILED",
+      "duration_sec": 26.4005,
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\tests\\test_eval.py\", line 403, in test_tree_of_thoughts_batch_evaluation\n    thoughts = tree_of_thoughts(problem=problem, llm=self.llm, depth=1, beam_width=1, batch_evaluate=True)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\tree_of_thoughts.py\", line 146, in tree_of_thoughts\n    batch_result = _invoke_structured_with_retry(\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\tree_of_thoughts.py\", line 91, in _invoke_structured_with_retry\n    raise last_err\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\tree_of_thoughts.py\", line 77, in _invoke_structured_with_retry\n    return structured.invoke(attempt_messages, temperature=temperature)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\runnables\\base.py\", line 3442, in invoke\n    input_ = context.run(step.invoke, input_, config, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\runnables\\base.py\", line 6002, in invoke\n    return self.bound.invoke(\n           ^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 476, in invoke\n    self.generate_prompt(\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 1849, in generate_prompt\n    return self.generate(prompt_messages, stop=stop, callbacks=callbacks, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 1656, in generate\n    self._generate_with_cache(\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 1994, in _generate_with_cache\n    result = self._generate(\n             ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_groq\\chat_models.py\", line 627, in _generate\n    response = self.client.create(messages=message_dicts, **params)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\groq\\resources\\chat\\completions.py\", line 461, in create\n    return self._post(\n           ^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\groq\\_base_client.py\", line 1242, in post\n    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\groq\\_base_client.py\", line 1044, in request\n    raise self._make_status_error_from_response(err.response) from None\ngroq.BadRequestError: Error code: 400 - {'error': {'message': \"Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\", 'type': 'invalid_request_error', 'code': 'tool_use_failed', 'failed_generation': '<function=ThoughtEvaluations>{\"evaluations\":[{\"candidate_index\":0,\"rationale\":\"Reviewing project scope and timeline is crucial for a successful project. This step ensures that all stakeholders are aligned and that the project timeline is realistic.\",\"score\":0.8},{\"candidate_index\":1,\"rationale\":\"Developing a comprehensive project plan is essential for effective resource allocation and budgeting.\",\"score\":0.9}]}<function>'}}\n"
+    },
+    {
+      "test_name": "test_tree_of_thoughts_execution",
+      "status": "FAILED",
+      "duration_sec": 44.4229,
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\tests\\test_eval.py\", line 393, in test_tree_of_thoughts_execution\n    thoughts = tree_of_thoughts(problem=problem, llm=self.llm, depth=2, beam_width=2)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\tree_of_thoughts.py\", line 146, in tree_of_thoughts\n    batch_result = _invoke_structured_with_retry(\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\tree_of_thoughts.py\", line 91, in _invoke_structured_with_retry\n    raise last_err\n  File \"C:\\Users\\Lenovo\\task_decomposition_and_planning\\planning\\algorithms\\tree_of_thoughts.py\", line 77, in _invoke_structured_with_retry\n    return structured.invoke(attempt_messages, temperature=temperature)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\runnables\\base.py\", line 3442, in invoke\n    input_ = context.run(step.invoke, input_, config, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\runnables\\base.py\", line 6002, in invoke\n    return self.bound.invoke(\n           ^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 476, in invoke\n    self.generate_prompt(\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 1849, in generate_prompt\n    return self.generate(prompt_messages, stop=stop, callbacks=callbacks, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 1656, in generate\n    self._generate_with_cache(\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_core\\language_models\\chat_models.py\", line 1994, in _generate_with_cache\n    result = self._generate(\n             ^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\langchain_groq\\chat_models.py\", line 627, in _generate\n    response = self.client.create(messages=message_dicts, **params)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\groq\\resources\\chat\\completions.py\", line 461, in create\n    return self._post(\n           ^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\groq\\_base_client.py\", line 1242, in post\n    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\groq\\_base_client.py\", line 1044, in request\n    raise self._make_status_error_from_response(err.response) from None\ngroq.BadRequestError: Error code: 400 - {'error': {'message': \"Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\", 'type': 'invalid_request_error', 'code': 'tool_use_failed', 'failed_generation': '<function=ThoughtEvaluations>{\"evaluations\": [{\"candidate_index\": 0, \"rationale\": \"Resequence trade orders by prioritizing critical components (estimated 2-day delay, $10,000 budget impact)\", \"score\": 0.8}, {\"candidate_index\": 1, \"rationale\": \"Implement contingency plan B: negotiate with supplier for expedited delivery (estimated 1-week delay, $5,000 budget impact)\", \"score\": 0.7}]}<function>'}}\n"
+    },
+    {
+      "test_name": "test_tree_of_thoughts_invalid_params",
+      "status": "PASSED",
+      "duration_sec": 0.0,
+      "error": null
+    }
+  ]
+}

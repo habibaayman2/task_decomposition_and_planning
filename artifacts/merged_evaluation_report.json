@@ -1,0 +1,390 @@
+{
+  "timestamp": "2026-08-14T23:11:45Z",
+  "llm_provider": "Groq (ChatGroq)",
+  "parallel_execution": true,
+  "benchmark": {
+    "provider": "Groq (ChatGroq)",
+    "timestamp": "2026-08-14T23:08:59Z",
+    "parallel_execution": true,
+    "comparison_matrix": {
+      "Plan-and-Solve": {
+        "success_rate": "8/10",
+        "accuracy_percent": 80.0,
+        "avg_llm_calls": 1.0,
+        "avg_score": 0.5447,
+        "score_variance": 0.038715,
+        "score_std": 0.1968,
+        "avg_latency_sec": 2.411,
+        "consistency_cv": 0.3613
+      },
+      "Tree-of-Thoughts": {
+        "success_rate": "7/10",
+        "accuracy_percent": 70.0,
+        "avg_llm_calls": 6.7,
+        "avg_score": 0.4473,
+        "score_variance": 0.047326,
+        "score_std": 0.2175,
+        "avg_latency_sec": 62.02,
+        "consistency_cv": 0.4863
+      },
+      "LATS (Grounded)": {
+        "success_rate": "9/10",
+        "accuracy_percent": 90.0,
+        "avg_llm_calls": 5.6,
+        "avg_score": 0.46,
+        "score_variance": 0.0144,
+        "score_std": 0.12,
+        "avg_latency_sec": 60.507,
+        "consistency_cv": 0.2609
+      }
+    },
+    "detailed_runs": [
+      {
+        "case_id": 1,
+        "task": "ProjectID 1: Mitigate delay risk by analyzing schedule dependencies.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.5,
+            "calls": 1,
+            "latency_sec": 1.654,
+            "output_preview": "**ProjectID 1: Mitigate Delay Risk by Analyzing Schedule Dependencies**\n\n**Problem Statement:** Identify and mitigate potential delay risks by analyzing schedule dependencies in the construction proje..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.5,
+            "calls": 7,
+            "latency_sec": 4.239,
+            "output_preview": "Analyze schedule dependencies using Critical Path Methodology (CPM) to identify critical tasks and potential delays. Verify budget and schedule alignment through regular status updates with stakeholde...",
+            "environment_details": [
+              "No specific groundable claim found to check."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 4,
+            "latency_sec": 2.828,
+            "output_preview": "Initial analysis complete",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 2,
+        "task": "ProjectID 1: Material shortage requires trade resequencing options.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": false,
+            "score": 0.34,
+            "calls": 1,
+            "latency_sec": 1.485,
+            "output_preview": "**ProjectID 1: Material Shortage Resequencing Plan**\n\n**Problem Statement:** A critical material shortage has been identified, impacting the project timeline and budget. The objective is to resequence..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.5,
+            "calls": 9,
+            "latency_sec": 67.279,
+            "output_preview": "Verify supplier's alternative material availability and negotiate delivery timelines (Budget: $10,000, Schedule: 2 weeks)",
+            "environment_details": [
+              "WARN: proposal mentions suppliers but no specific name found to verify."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 4,
+            "latency_sec": 44.059,
+            "output_preview": "Supplier scouting initiated",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 3,
+        "task": "ProjectID 1: Address material shortage with a rush order within budget.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.7133,
+            "calls": 1,
+            "latency_sec": 3.352,
+            "output_preview": "**ProjectID 1: Address Material Shortage with a Rush Order within Budget**\n\n**Problem Statement:** Material shortage has been identified for a critical project component, and immediate action is requi..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": false,
+            "score": 0.2867,
+            "calls": 6,
+            "latency_sec": 62.957,
+            "output_preview": "Negotiate with the local supplier to reduce the total cost of the materials to $9,000, and then place a rush order with a 24-hour delivery guarantee, verifying the total cost is within the project's b...",
+            "environment_details": [
+              "FAIL: proposal mentions rush order but no valid project_id found.",
+              "WARN: proposal mentions suppliers but no specific name found to verify."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 6,
+            "latency_sec": 68.253,
+            "output_preview": "Order placed",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 4,
+        "task": "ProjectID 1: Address material shortage.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.5,
+            "calls": 1,
+            "latency_sec": 1.355,
+            "output_preview": "**ProjectID 1: Address Material Shortage**\n\n**Problem Statement:** \nThe construction project is facing a material shortage, which is causing delays and impacting the overall project timeline. The shor..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.5,
+            "calls": 6,
+            "latency_sec": 51.82,
+            "output_preview": "Verify material suppliers and negotiate alternative sources (Budget: $1,000, Schedule: 5 days)",
+            "environment_details": [
+              "WARN: proposal mentions suppliers but no specific name found to verify."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 4,
+            "latency_sec": 41.982,
+            "output_preview": "ordered",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 5,
+        "task": "ProjectID 1: Place a rush order with premium cost $999999 to expedite the missing material.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": false,
+            "score": 0.2333,
+            "calls": 1,
+            "latency_sec": 1.254,
+            "output_preview": "**ProjectID 1: Expedited Material Order**\n\n**Problem Statement:** The project is facing a delay due to the unavailability of a critical material. To mitigate this risk, we need to expedite the order a..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": false,
+            "score": 0.2867,
+            "calls": 6,
+            "latency_sec": 60.199,
+            "output_preview": "Reach out to the supplier to confirm their ability to expedite the missing material and provide a revised delivery date. If the supplier is unable to expedite the material, consider alternative soluti...",
+            "environment_details": [
+              "FAIL: proposal mentions rush order but no valid project_id found.",
+              "WARN: proposal mentions suppliers but no specific name found to verify."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": false,
+            "score": 0.1,
+            "calls": 10,
+            "latency_sec": 84.487,
+            "output_preview": "Expedite missing material - Attempt 1",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 6,
+        "task": "ProjectID 1: Resequence unaffected trades ahead of the blocked item so the crew stays productive while the blocking issue is resolved.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.4167,
+            "calls": 1,
+            "latency_sec": 3.356,
+            "output_preview": "**ProjectID 1: Resequence Unaffected Trades Ahead of the Blocked Item**\n\n**Problem Statement:** A critical trade (e.g., electrical) is blocked due to a supplier delay, causing a ripple effect on the p..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.5,
+            "calls": 6,
+            "latency_sec": 57.4,
+            "output_preview": "Re-sequence unaffected trades ahead of the blocked item and implement a contingency plan to mitigate potential delays. Verify the updated schedule and budget to ensure compliance with project timeline...",
+            "environment_details": [
+              "No specific groundable claim found to check."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 4,
+            "latency_sec": 47.348,
+            "output_preview": "unresolved",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 7,
+        "task": "ProjectID 1: Rush order $5000.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.7133,
+            "calls": 1,
+            "latency_sec": 1.533,
+            "output_preview": "**Project ID 1: Rush Order $5000**\n\n**Project Overview:**\nThe client requires a rush order of $5000 for a construction project. The project involves completing a series of tasks within a tight deadlin..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": false,
+            "score": 0.0,
+            "calls": 6,
+            "latency_sec": 83.951,
+            "error": "BadRequestError: Error code: 400 - {'error': {'message': \"Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.\", 'type': 'invalid_request_error', 'code': 'tool_use_failed', 'failed_generation': '<function=ThoughtEvaluations>{\"evaluations\":[{\"candidate_index\":0,\"rationale\":\"Propose overtime for key team members ($1500, 1 day) and expedite materials delivery ($3500, 2 days)\",\"score\":0.8},{\"candidate_index\":1,\"rationale\":\"Implement agile methodology to accelerate task completion ($2000, 1.5 days) and negotiate with suppliers for a discount ($3000, 2 days)\",\"score\":0.7}]}<function>'}}"
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 10,
+            "latency_sec": 115.769,
+            "output_preview": "OrderPlaced",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 8,
+        "task": "ProjectID 1: Resequence trades.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.4167,
+            "calls": 1,
+            "latency_sec": 4.23,
+            "output_preview": "**ProjectID 1: Resequence Trades Plan**\n\n**Problem Statement:** The current project sequence is not optimized, resulting in inefficiencies, delays, and increased costs. The goal is to resequence the t..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.5,
+            "calls": 6,
+            "latency_sec": 55.861,
+            "output_preview": "Prioritize trades based on risk assessment and categorize them into high, medium, and low-risk groups. Verify budget and schedule for each group separately to ensure feasibility and adherence to deadl...",
+            "environment_details": [
+              "No specific groundable claim found to check."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 4,
+            "latency_sec": 47.999,
+            "output_preview": "attempted",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 9,
+        "task": "ProjectID 1: Switch to steel yard supplier.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.9,
+            "calls": 1,
+            "latency_sec": 3.546,
+            "output_preview": "**ProjectID 1: Switch to Steel Yard Supplier**\n\n**Problem Statement:** Our current steel supplier is facing logistical issues, resulting in delayed deliveries and increased costs. To mitigate this ris..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.9,
+            "calls": 7,
+            "latency_sec": 68.679,
+            "output_preview": "Obtain quotes from 3 alternative steel yard suppliers and compare costs (estimated budget: $5,000, estimated schedule: 4 weeks)",
+            "environment_details": [
+              "OK: proposed supplier(s) (Ironbridge Steel Yard) are Active."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 4,
+            "latency_sec": 54.54,
+            "output_preview": "SteelYardSupplierSelected",
+            "iterations_used": 2
+          }
+        ]
+      },
+      {
+        "case_id": 10,
+        "task": "ProjectID 1: Rush order $1000.",
+        "results": [
+          {
+            "method": "Plan-and-Solve",
+            "success": true,
+            "score": 0.7133,
+            "calls": 1,
+            "latency_sec": 2.348,
+            "output_preview": "**ProjectID 1: Rush Order Solution**\n\n**Project Overview:**\n- Project ID: 1\n- Project Type: Rush Order\n- Budget: $1000\n- Deadline: ASAP (immediate start)\n\n**Problem Statement:**\nThe client requires a ..."
+          },
+          {
+            "method": "Tree-of-Thoughts",
+            "success": true,
+            "score": 0.5,
+            "calls": 8,
+            "latency_sec": 107.816,
+            "output_preview": "Proposal 1: Hire 2 additional team members to work on the project ($400, 5 days) and invest in a project management tool ($200, 2 days)",
+            "environment_details": [
+              "No specific groundable claim found to check."
+            ]
+          },
+          {
+            "method": "LATS (Grounded)",
+            "success": true,
+            "score": 0.5,
+            "calls": 6,
+            "latency_sec": 97.806,
+            "output_preview": "Order production to start immediately",
+            "iterations_used": 2
+          }
+        ]
+      }
+    ]
+  },
+  "unit_tests": {
+    "total": 14,
+    "failures": 1,
+    "errors": 3,
+    "skipped": 0,
+    "success": false
+  }
+}
