@@ -31,12 +31,12 @@ for _p in (_THIS_DIR, _ROOT_DIR):
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from planning_lab.algorithms.plan_and_solve import plan_and_solve
-from planning_lab.algorithms.tree_of_thoughts import tree_of_thoughts
-from planning_lab.algorithms.lats import lats
-from planning_lab.algorithms.self_refine import self_refine
-from planning_lab.algorithms.reflexion import reflexion
-from planning_lab.algorithms.environment import IronBridgeEnvironment
+from planning.algorithms.plan_and_solve import plan_and_solve
+from planning.algorithms.tree_of_thoughts import tree_of_thoughts
+from planning.algorithms.lats import lats
+from planning.algorithms.self_refine import self_refine
+from planning.algorithms.reflexion import reflexion
+from planning.algorithms.environment import IronBridgeEnvironment
 
 
 def _diagnose_executor(instruction: str, context: dict, llm: BaseChatModel) -> str:
