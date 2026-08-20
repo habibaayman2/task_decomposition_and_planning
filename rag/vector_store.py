@@ -1,7 +1,7 @@
 import os
 from langchain_qdrant import QdrantVectorStore
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
-from rag.chunking import get_policy_chunks
+from rag.chunking import get_policy_chunks, get_chunks_for_file
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 import atexit
@@ -63,6 +63,48 @@ def setup_vector_store():
 
     print("✅ Qdrant Vector Store is ready, indexed, and payload-indexed!")
     return _vector_store_instance
+
+
+def add_document(filename: str):
+   
+    store = setup_vector_store()
+
+    new_chunks = get_chunks_for_file(filename)
+    if not new_chunks:
+        print(f"⚠️ {filename} produced 0 chunks after splitting -- nothing added.")
+        return 0
+
+    store.add_documents(new_chunks)
+    print(f"✅ Added {len(new_chunks)} chunk(s) from {filename} to the index.")
+    return len(new_chunks)
+
+
+def remove_document(filename: str):
+   
+    global _client_instance
+    setup_vector_store()  # يتأكد إن الـ client متأسس
+
+    result = _client_instance.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="metadata.source",
+                        match=models.MatchValue(value=filename),
+                    )
+                ]
+            )
+        ),
+    )
+    print(f" Removed all chunks with source={filename!r} from the index.")
+    return result
+
+
+def update_document(filename: str):
+
+    remove_document(filename)
+    return add_document(filename)
 
 
 if __name__ == "__main__":

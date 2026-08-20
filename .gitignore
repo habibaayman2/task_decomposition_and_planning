@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 venv/
 memory/memory_store.db
-rag
+rag/qdrant_data/
+rag/qdrant_data_v3/
+
 
 

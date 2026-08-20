@@ -20,7 +20,7 @@ from memory.self_rag_check import SelfRAGChecker
 from rag.chunking import get_policy_chunks
 from rag.vector_store import setup_vector_store
 load_dotenv()
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 def _tokenize(text: str) -> list[str]:
