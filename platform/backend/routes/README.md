@@ -32,7 +32,7 @@ All routes are mounted under `/api/*` and combined in `routes/__init__.py`.
 
 ---
 
-## A4: Agent List & Tool Management
+## Agent List & Tool Management
 
 ### Files
 
