@@ -95,7 +95,7 @@ except ModuleNotFoundError:
     from context_eval.observation_masking import apply as apply_observation_masking
     from context_eval.transcript import Turn
 
-MODEL = "llama-3.1-8b-instant"
+MODEL = "openai/gpt-oss-20b"
 
 SYSTEM_PROMPT = (
     "You are the IronBridge Construction procurement assistant. Use the "

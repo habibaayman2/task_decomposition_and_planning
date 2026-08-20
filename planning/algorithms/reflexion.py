@@ -52,10 +52,11 @@ def _ungrounded_self_evaluate(task: str, attempt: str, llm: BaseChatModel) -> En
     .evaluate() returns, so grounded and ungrounded runs stay directly comparable,
     and there's no brittle "score[:\\s=]+(\\d+)" parsing to fall out of sync with
     however the model happens to phrase its answer."""
-    structured_llm = llm.with_structured_output(EnvironmentFeedback)
+    structured_llm = llm.with_structured_output(EnvironmentFeedback, method="json_mode")
     return structured_llm.invoke([
         ("system", "You are an independent evaluator. You have no access to the real "
-                   "database -- judge based only on what's written in the attempt."),
+                   "database -- judge based only on what's written in the attempt. "
+                   "Respond only with a valid JSON object."),
         ("human", f"""Task: {task}
 Attempt:
 {attempt}

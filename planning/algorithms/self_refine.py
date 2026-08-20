@@ -248,9 +248,9 @@ If there are no issues, respond exactly PASS."""),
 
 def _ungrounded_self_evaluate(goal: str, draft: str, llm: BaseChatModel) -> EnvironmentFeedback:
     """Ungrounded evaluation: LLM judges its own output via structured feedback."""
-    structured_llm = llm.with_structured_output(EnvironmentFeedback)
+    structured_llm = llm.with_structured_output(EnvironmentFeedback, method="json_mode")
     return structured_llm.invoke([
-        ("system", "You are an independent evaluator. Judge the draft against the goal with no access to external databases."),
+        ("system", "You are an independent evaluator. Judge the draft against the goal with no access to external databases. Respond only with a valid JSON object."),
         ("human", f"""Goal: {goal}
 Draft:
 {draft}
