@@ -189,15 +189,15 @@ curl -X POST "http://localhost:8000/api/tools/scope/get?agent_id=change_order_ag
 
 ---
 
-## A6: HITL Inbox, Ticket Inbox, RAG Documents
+## HITL Inbox, Ticket Inbox, RAG Documents
 
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `ib_platform/backend/routes/hitl.py` | HITL task inbox — list, inspect, resolve, auto-resume graph |
-| `ib_platform/backend/routes/tickets.py` | Ticket inbox — list, investigate, resolve with state corrections, auto-resume graph |
-| `ib_platform/backend/routes/rag_docs.py` | Adapter-based RAG doc management — works with ANY RAG backend |
+| `platform/backend/routes/hitl.py` | HITL task inbox — list, inspect, resolve, auto-resume graph |
+| `platform/backend/routes/tickets.py` | Ticket inbox — list, investigate, resolve with state corrections, auto-resume graph |
+| `platform/backend/routes/rag_docs.py` | Adapter-based RAG doc management — works with ANY RAG backend |
 | `ib_platform/backend/routes/__init__.py` | Aggregate router combining all admin routes |
 
 ---
