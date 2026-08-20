@@ -405,55 +405,45 @@ def main() -> None:
     print("FULL UNIFIED COMPARISON: All Methods vs. All Cases")
     print("=" * 86)
 
+    # Rate limit protection: small pause after every individual method call
+    # (a single case fires off ~30-40 LLM calls across all 10 methods, which
+    # is enough on its own to blow through Groq's per-minute limit even with
+    # a pause between cases) plus a longer pause between cases.
+    INTER_CALL_DELAY_SECONDS = 3
+    INTER_CASE_DELAY_SECONDS = 10
+
+    def _run_and_report(label: str, fn, *args) -> dict:
+        r = fn(*args)
+        all_results.append(r)
+        print(f"  {label}| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
+        if not r["success"] and r.get("error"):
+            print(f"        ↳ error: {r['error']}")
+        time.sleep(INTER_CALL_DELAY_SECONDS)
+        return r
+
     for idx, case in enumerate(TEST_SUITE):
         print(f"\n[{case['id']}] {case['request'][:80]}...")
 
         # Decomposition
-        r = run_decomposition_first(case, llm, grounded_env)
-        all_results.append(r)
-        print(f"  DF  | {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        r = run_dynamic(case, llm, grounded_env)
-        all_results.append(r)
-        print(f"  Dyn | {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
+        _run_and_report("DF  ", run_decomposition_first, case, llm, grounded_env)
+        _run_and_report("Dyn ", run_dynamic, case, llm, grounded_env)
 
         # Planning algorithms
-        r = run_ps(case, llm, grounded_env)
-        all_results.append(r)
-        print(f"  PS  | {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        r = run_tot(case, llm, grounded_env)
-        all_results.append(r)
-        print(f"  ToT | {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        r = run_lats(case, llm, grounded_env, "Grounded")
-        all_results.append(r)
-        print(f"  L-G | {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        r = run_lats(case, llm, ungrounded_env, "Ungrounded")
-        all_results.append(r)
-        print(f"  L-U | {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
+        _run_and_report("PS  ", run_ps, case, llm, grounded_env)
+        _run_and_report("ToT ", run_tot, case, llm, grounded_env)
+        _run_and_report("L-G ", run_lats, case, llm, grounded_env, "Grounded")
+        _run_and_report("L-U ", run_lats, case, llm, ungrounded_env, "Ungrounded")
 
         # Self-correction
-        r = run_self_refine(case, llm, grounded_env, "Grounded")
-        all_results.append(r)
-        print(f"  SR-G| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
+        _run_and_report("SR-G", run_self_refine, case, llm, grounded_env, "Grounded")
+        _run_and_report("SR-U", run_self_refine, case, llm, grounded_env, "Ungrounded")
+        _run_and_report("Ref-G", run_reflexion, case, llm, grounded_env, "Grounded")
+        _run_and_report("Ref-U", run_reflexion, case, llm, grounded_env, "Ungrounded")
 
-        r = run_self_refine(case, llm, grounded_env, "Ungrounded")
-        all_results.append(r)
-        print(f"  SR-U| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        r = run_reflexion(case, llm, grounded_env, "Grounded")
-        all_results.append(r)
-        print(f"  Ref-G| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        r = run_reflexion(case, llm, grounded_env, "Ungrounded")
-        all_results.append(r)
-        print(f"  Ref-U| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-
-        # Rate limit protection: sleep between cases
+        # Rate limit protection: longer sleep between cases on top of the
+        # per-call delay above
         if idx < len(TEST_SUITE) - 1:
-            time.sleep(10)
+            time.sleep(INTER_CASE_DELAY_SECONDS)
 
     # Build master comparison table
     methods = [
