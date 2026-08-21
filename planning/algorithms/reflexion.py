@@ -44,25 +44,39 @@ class ReflexionResult:
     memory: list[str]
     total_llm_calls: int = 0
     approx_tokens: int = 0
+    self_graded: bool = False
+    """True when ungrounded evaluation fell back to using the same `llm`
+    that generated the attempt (no judge_llm supplied) -- flags the
+    known self-grading bias so callers can report/exclude it instead of
+    silently treating it as an independent score."""
 
 
-def _ungrounded_self_evaluate(task: str, attempt: str, llm: BaseChatModel) -> EnvironmentFeedback:
+def _ungrounded_self_evaluate(
+    task: str, attempt: str, judge_llm: BaseChatModel
+) -> EnvironmentFeedback:
     """Ungrounded self-evaluation via with_structured_output(EnvironmentFeedback)
     instead of a regex-parsed free-text reply -- same schema IronBridgeEnvironment
     .evaluate() returns, so grounded and ungrounded runs stay directly comparable,
     and there's no brittle "score[:\\s=]+(\\d+)" parsing to fall out of sync with
-    however the model happens to phrase its answer."""
-    structured_llm = llm.with_structured_output(EnvironmentFeedback, method="json_mode")
+    however the model happens to phrase its answer.
+
+    judge_llm must be a genuinely separate model instance from whatever
+    generated `attempt` -- see the self-grading-bias note on reflexion()
+    below. Groq's json_mode requires the literal word 'json' to appear
+    somewhere in the messages, hence the lowercase 'json' both places
+    below (a capitalized-only "JSON" was silently rejected with a 400)."""
+    structured_llm = judge_llm.with_structured_output(EnvironmentFeedback, method="json_mode")
     return structured_llm.invoke([
         ("system", "You are an independent evaluator. You have no access to the real "
                    "database -- judge based only on what's written in the attempt. "
-                   "Respond only with a valid JSON object."),
+                   "Respond only with valid json."),
         ("human", f"""Task: {task}
 Attempt:
 {attempt}
 
 Judge this attempt. Return success (true/false), a score between 0.0 and 1.0,
-and a short list of specific issues in details (empty list if none)."""),
+and a short list of specific issues in details (empty list if none).
+Respond with json only."""),
     ])
 
 
@@ -72,20 +86,41 @@ def reflexion(
     environment: Optional[IronBridgeEnvironment] = None,
     max_trials: int = 3,
     memory_size: int = 3,
+    judge_llm: Optional[BaseChatModel] = None,
 ) -> ReflexionResult:
     """
     Reflexion loop: attempt -> evaluate -> reflect -> retry with memory.
 
     Args:
         task: The planning problem to solve.
-        llm: The language model.
+        llm: The language model used to generate attempts and reflections.
         environment: If provided, grounded evaluation against the real DB.
-                     If None, ungrounded self-evaluation by the LLM.
+                     If None, ungrounded self-evaluation is used instead.
         max_trials: Maximum retry attempts.
         memory_size: Max reflections to carry across trials.
+        judge_llm: The model used for UNGROUNDED self-evaluation (ignored
+            when `environment` is provided, since grounded mode judges
+            against the real DB instead). Pass a genuinely different
+            model instance than `llm` here.
+
+            SELF-GRADING BIAS: if judge_llm is left as None, ungrounded
+            mode falls back to using `llm` itself to grade its own
+            attempt. That is a known bias in the Reflexion literature --
+            a model tends to rate its own output more favorably than an
+            independent judge would, which is exactly the failure mode
+            that makes "Reflexion (Ungrounded)" scores look artificially
+            close to "Reflexion (Grounded)" in a comparison table when
+            they shouldn't be directly comparable. The fallback exists
+            so this function stays backward compatible for any caller
+            that only has one model handy, but the result is flagged
+            (`self_graded=True`) so it can be reported honestly rather
+            than silently blended in with genuinely independent scores.
     """
     if max_trials < 1 or memory_size < 1:
         raise ValueError("max_trials and memory_size must be positive")
+
+    self_graded = judge_llm is None
+    evaluator_llm = judge_llm if judge_llm is not None else llm
 
     memory: list[str] = []
     trials: list[ReflexionTrial] = []
@@ -116,8 +151,10 @@ Produce the complete deliverable. Apply remembered lessons without discussing th
             # Grounded: real DB check
             feedback = environment.evaluate(attempt)
         else:
-            # Ungrounded: LLM judges itself
-            feedback = _ungrounded_self_evaluate(task, attempt, llm)
+            # Ungrounded: judged by evaluator_llm (judge_llm if the
+            # caller supplied one, else self-graded by `llm` -- see
+            # the self-grading-bias note in this function's docstring)
+            feedback = _ungrounded_self_evaluate(task, attempt, evaluator_llm)
             total_llm_calls += 1
 
         trial = ReflexionTrial(
@@ -133,7 +170,8 @@ Produce the complete deliverable. Apply remembered lessons without discussing th
             trials.append(trial)
             tokens = sum(_approx_tokens(t.attempt, t.reflection or "") for t in trials)
             return ReflexionResult(
-                True, attempt, trials, memory[-memory_size:], total_llm_calls, tokens
+                True, attempt, trials, memory[-memory_size:], total_llm_calls, tokens,
+                self_graded=self_graded and environment is None,
             )
 
         # ---- Reflect ----
@@ -159,5 +197,6 @@ State what I did wrong and the specific strategy I should use next trial. Start 
 
     tokens = sum(_approx_tokens(t.attempt, t.reflection or "") for t in trials)
     return ReflexionResult(
-        False, best_attempt, trials, memory[-memory_size:], total_llm_calls, tokens
+        False, best_attempt, trials, memory[-memory_size:], total_llm_calls, tokens,
+        self_graded=self_graded and environment is None,
     )
