@@ -20,7 +20,7 @@ for path_entry in (str(REPO_ROOT), str(REPO_ROOT / "mcp_server")):
     if path_entry not in sys.path:
         sys.path.insert(0, path_entry)
 
-# --------------------------------------------------------------------------
+# ----------------------------------------------------------
 
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
