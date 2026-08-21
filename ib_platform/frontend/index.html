@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IronBridge — Construction AI Platform</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --success:#4ade80; --danger:#f87171; --border:#334155; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    .container { text-align:center; max-width:720px; padding:2rem; }
+    h1 { font-size:2.5rem; margin:0 0 0.5rem; }
+    .subtitle { color:var(--muted); font-size:1.1rem; margin-bottom:2.5rem; }
+    .cards { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; }
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:1rem; padding:2rem; text-decoration:none; color:var(--text); transition:transform 0.15s,border-color 0.15s; cursor:pointer; }
+    .card:hover { transform:translateY(-4px); border-color:var(--accent); }
+    .card .icon { font-size:2.5rem; margin-bottom:1rem; }
+    .card h2 { margin:0 0 0.5rem; font-size:1.25rem; color:var(--accent); }
+    .card p { margin:0; color:var(--muted); font-size:0.95rem; line-height:1.5; }
+    .footer { margin-top:3rem; color:var(--muted); font-size:0.85rem; }
+    .health { margin-top:1rem; font-size:0.85rem; }
+    .health.ok { color:var(--success); }
+    .health.err { color:var(--danger); }
+    .api-box { margin-top:1.5rem; }
+    .api-box input { background:var(--panel); color:var(--text); border:1px solid var(--border); padding:0.5rem 1rem; border-radius:0.5rem; width:280px; font-size:0.9rem; }
+    @media(max-width:600px){ .cards{grid-template-columns:1fr;} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🏗️ IronBridge</h1>
+    <div class="subtitle">Construction AI Platform — State Graphs, HITL, and Agent Management</div>
+    <div class="cards">
+      <a class="card" href="admin/admin_panel.html">
+        <div class="icon">🛡️</div>
+        <h2>Admin Panel</h2>
+        <p>Manage agents, MCP tools, HITL approvals, failure tickets, and RAG documents. For project managers and system administrators.</p>
+      </a>
+      <a class="card" href="user/index.html">
+        <div class="icon">💬</div>
+        <h2>User Chat</h2>
+        <p>Chat with any agent — change orders, equipment recovery, safety incidents, memory/RAG, or planning. For field engineers and site staff.</p>
+      </a>
+    </div>
+    <div class="api-box">
+      <input id="apiBase" placeholder="API Base URL" value="http://localhost:8000" />
+    </div>
+    <div class="health" id="health">Checking backend…</div>
+    <div class="footer">IronBridge Construction — Final Project</div>
+  </div>
+<script src="shared_config.js"></script>
+<script>
+  (function(){
+    const el = document.getElementById("apiBase");
+    if(window.IBConfig) el.value = IBConfig.getApiBase();
+    el.addEventListener("change", () => { if(window.IBConfig) IBConfig.setApiBase(el.value); });
+    async function check(){
+      const h = document.getElementById("health");
+      const base = window.IBConfig ? IBConfig.getApiBase() : el.value;
+      try {
+        const d = await (await fetch(base + "/health")).json();
+        if(d.status==="ok"){ h.className="health ok"; h.textContent=`✅ Backend online — ${d.routes.length} routes, ${d.a4_loaded?"A4 loaded":"A4 fallback"}`; }
+        else { h.className="health err"; h.textContent="⚠️ Backend error"; }
+      } catch { h.className="health err"; h.textContent="❌ Backend offline — start with: python -m ib_platform.backend.app"; }
+    }
+    check(); setInterval(check, 5000);
+  })();
+</script>
+</body>
+</html>
