@@ -90,12 +90,27 @@ def _parse_breakdown_response(response: str) -> Dict[str, Any]:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         raise ValueError(f"LLM breakdown decomposition produced unparseable JSON: {exc}")
-
     missing = set(_REQUIRED_BREAKDOWN_FIELDS) - set(parsed.keys())
     if missing:
         raise ValueError(f"LLM breakdown decomposition missing fields: {missing}")
-    if any(parsed[k] is None for k in _REQUIRED_BREAKDOWN_FIELDS):
-        raise ValueError(f"LLM breakdown decomposition left a field null: {parsed}")
+
+    unresolved = [k for k in _REQUIRED_BREAKDOWN_FIELDS if parsed.get(k) is None]
+    if unresolved:
+        # Human-facing message, not a technical one -- surfaces
+        # directly in the chat UI if this bubbles up as a ticket, so
+        # the user knows exactly what to add to their message instead
+        # of seeing a raw Python error.
+        field_hints = {
+            "equipment_id": "the equipment's ID number (e.g. 'equipment 2')",
+            "project_id": "which project it belongs to (e.g. 'project 1')",
+            "site": "the site name",
+            "reported_symptom": "what's wrong with it",
+        }
+        needed = ", ".join(field_hints[k] for k in unresolved)
+        raise ValueError(
+            f"Could not determine {needed} from your message. "
+            f"Please include these details and try again."
+        )
 
     return {
         "equipment_id": int(parsed["equipment_id"]),
@@ -103,7 +118,6 @@ def _parse_breakdown_response(response: str) -> Dict[str, Any]:
         "site": str(parsed["site"]),
         "reported_symptom": str(parsed["reported_symptom"]),
     }
-
 
 def _llm_decompose_breakdown_with_retry(raw_request: str, max_retries: int = 2) -> Dict[str, Any]:
     prompt = _build_breakdown_prompt(raw_request)
@@ -121,7 +135,6 @@ def _llm_decompose_breakdown_with_retry(raw_request: str, max_retries: int = 2) 
             raise last_error
 
     raise last_error  # pragma: no cover
-
 
 def report_breakdown(state: Dict[str, Any]) -> Dict[str, Any]:
     """Entry node. Just records that a run has started for this piece
@@ -146,6 +159,10 @@ def report_breakdown(state: Dict[str, Any]) -> Dict[str, Any]:
                 f"report_breakdown needs either {_REQUIRED_BREAKDOWN_FIELDS} "
                 f"directly, or a 'request' free-text field to decompose."
             )
+        # If this raises (e.g. equipment_id couldn't be determined),
+        # it propagates up as-is -- no partial 'structured' to fall
+        # back on, which is correct: a half-decomposed request isn't
+        # safe to proceed with.
         structured = _llm_decompose_breakdown_with_retry(raw_request)
 
     return {
@@ -205,7 +222,10 @@ def approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     Cheap options (repair for a few hundred pounds, well inside
     budget) skip the human entirely and go straight to execution.
     """
-    project = get_project(state["project_id"])
+    project_id = state.get("project_id") or 1  # Default to demo project
+    project = get_project(project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
     remaining_budget = project["RemainingBudget"]
 
     if state["proposed_cost"] <= remaining_budget:
