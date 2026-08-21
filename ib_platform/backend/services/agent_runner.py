@@ -7,7 +7,7 @@ from pathlib import Path
 
 # --------------------------------------------------------------------------
 # Path resolution (same pattern used by routes/agents.py, routes/tools.py, etc.)
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------
 _current_file = Path(__file__).resolve()
 REPO_ROOT = next(
     (p for p in [_current_file] + list(_current_file.parents) if (p / "mcp_server").exists()),
