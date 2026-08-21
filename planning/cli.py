@@ -60,7 +60,7 @@ def parser() -> argparse.ArgumentParser:
         choices=["dag", "dynamic", "ps", "tot", "reflexion", "lats"],
         default="dag",
     )
-    cli.add_argument("--model", default=None, help="Groq model name (default: llama-3.3-70b-versatile)")
+    cli.add_argument("--model", default=None, help="Groq model name (default: openai/gpt-oss-120b)")
     cli.add_argument("--depth", type=int, default=2, choices=range(1, 4))
     cli.add_argument("--beam-width", type=int, default=2, choices=range(1, 4))
     cli.add_argument("--max-trials", type=int, default=3, choices=range(1, 6))

@@ -20,7 +20,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 
 _warned = False
 
@@ -310,9 +310,9 @@ def get_planning_llm(model: Optional[str] = None) -> BaseChatModel:
     if has_real_llm():
         try:
             from langchain_groq import ChatGroq
-            # نستخدم الموديل الممرر، أو الموديل من .env، أو الموديل الافتراضي
-            model_name = model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-            
+
+            model_name = model or os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+
             return ChatGroq(
                 model=model_name,
                 api_key=os.environ["GROQ_API_KEY"],

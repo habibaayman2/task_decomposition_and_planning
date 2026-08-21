@@ -33,7 +33,8 @@ HITL condition (must be defensible, not just "high risk"):
 """
 
 from typing import Any, Dict
-
+import json
+import re
 from mcp_server.db import get_project
 from state_graph.core.hitl import require_hitl
 from state_graph.equipment_recovery.tools import (
@@ -45,20 +46,112 @@ from state_graph.equipment_recovery.tools import (
 from state_graph.equipment_recovery.tot import evaluate_recovery_options
 
 
+_REQUIRED_BREAKDOWN_FIELDS = ("equipment_id", "project_id", "site", "reported_symptom")
+
+
+def call_llm(prompt: str, temperature: float = 0.2) -> str:
+    """Same shared bridge Person A's change_order uses -- routes through
+    planning.model_provider so this stays consistent with the rest of
+    the repo's LLM calls rather than inventing a second path."""
+    from planning.model_provider import get_planning_llm
+    from langchain_core.messages import HumanMessage
+
+    llm = get_planning_llm()
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return getattr(response, "content", str(response))
+
+
+def _build_breakdown_prompt(raw_request: str) -> str:
+    return f"""You are an equipment-breakdown intake assistant for a
+construction company. A site worker has reported equipment trouble in
+plain language. Decompose it into a JSON object with exactly these keys:
+  - equipment_id: integer (the equipment's ID number)
+  - project_id: integer (which project/site this equipment belongs to)
+  - site: string (the site name)
+  - reported_symptom: string (what's wrong, in the worker's own words)
+
+If any field cannot be determined, set it to null.
+
+EXAMPLE:
+Raw request: "The crane at Riverside Tower (equipment 2, project 1) has
+a hydraulic failure, not responding at all."
+Response: {{"equipment_id": 2, "project_id": 1, "site": "Riverside Tower", "reported_symptom": "Hydraulic failure, not responding"}}
+
+Now decompose this request:
+{raw_request}
+
+Respond with ONLY valid JSON, no markdown, no explanation."""
+
+
+def _parse_breakdown_response(response: str) -> Dict[str, Any]:
+    cleaned = re.sub(r"```(?:json)?\s*", "", response).strip()
+    cleaned = re.sub(r"\s*```", "", cleaned).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"LLM breakdown decomposition produced unparseable JSON: {exc}")
+
+    missing = set(_REQUIRED_BREAKDOWN_FIELDS) - set(parsed.keys())
+    if missing:
+        raise ValueError(f"LLM breakdown decomposition missing fields: {missing}")
+    if any(parsed[k] is None for k in _REQUIRED_BREAKDOWN_FIELDS):
+        raise ValueError(f"LLM breakdown decomposition left a field null: {parsed}")
+
+    return {
+        "equipment_id": int(parsed["equipment_id"]),
+        "project_id": int(parsed["project_id"]),
+        "site": str(parsed["site"]),
+        "reported_symptom": str(parsed["reported_symptom"]),
+    }
+
+
+def _llm_decompose_breakdown_with_retry(raw_request: str, max_retries: int = 2) -> Dict[str, Any]:
+    prompt = _build_breakdown_prompt(raw_request)
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = call_llm(prompt, temperature=0.2)
+            return _parse_breakdown_response(response)
+        except ValueError as exc:
+            last_error = exc
+            if attempt < max_retries:
+                prompt += f"\n\nYour previous response was invalid: {exc}. Please fix and respond with ONLY valid JSON."
+                continue
+            raise last_error
+
+    raise last_error  # pragma: no cover
+
+
 def report_breakdown(state: Dict[str, Any]) -> Dict[str, Any]:
     """Entry node. Just records that a run has started for this piece
     of equipment -- no diagnosis yet, on purpose (see module docstring
-    on why this is a separate node from diagnose_issue)."""
-    required = ("equipment_id", "project_id", "site", "reported_symptom")
-    missing = [k for k in required if k not in state]
-    if missing:
-        # Not a HITLPause -- this is a genuine unplanned failure (bad
-        # input), so it becomes a ticket, per tickets.py's contract.
-        raise ValueError(f"report_breakdown missing required state keys: {missing}")
+    on why this is a separate node from diagnose_issue).
+
+    TASK DECOMPOSITION addition: accepts either a ready-made structured
+    state (backward compatible -- test_equipment_recovery.py and any
+    programmatic caller keep working unchanged) OR a single free-text
+    "request" field, which an LLM call decomposes into the required
+    fields. Mirrors state_graph/change_order/nodes.py's
+    decompose_change_order_node, so a real end user typing a plain
+    sentence in the chat UI works the same way across both agents
+    instead of the frontend needing its own separate parsing logic.
+    """
+    if all(k in state for k in _REQUIRED_BREAKDOWN_FIELDS):
+        structured = {k: state[k] for k in _REQUIRED_BREAKDOWN_FIELDS}
+    else:
+        raw_request = state.get("request")
+        if not raw_request:
+            raise ValueError(
+                f"report_breakdown needs either {_REQUIRED_BREAKDOWN_FIELDS} "
+                f"directly, or a 'request' free-text field to decompose."
+            )
+        structured = _llm_decompose_breakdown_with_retry(raw_request)
 
     return {
-        "status_note": f"Breakdown reported for equipment {state['equipment_id']} "
-                        f"at {state['site']}: {state['reported_symptom']}",
+        **structured,
+        "status_note": f"Breakdown reported for equipment {structured['equipment_id']} "
+                        f"at {structured['site']}: {structured['reported_symptom']}",
     }
 
 
@@ -119,6 +212,7 @@ def approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
         # Under budget: no HITL needed, proceed straight to execution.
         return {"approval_status": "auto_approved", "hitl_decision": None}
     decision_key = f"hitl_decision__{state['proposed_action']}"
+    state["remaining_budget"] = remaining_budget
     decision = require_hitl(
         state,
         reason=(

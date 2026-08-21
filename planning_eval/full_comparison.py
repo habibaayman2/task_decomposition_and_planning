@@ -46,7 +46,7 @@ from planning.algorithms.self_refine import self_refine
 from planning.algorithms.reflexion import reflexion
 from planning.algorithms.environment import IronBridgeEnvironment
 from planning.algorithms import Environment as RandomizedEnvironment
-from planning.model_provider import get_planning_llm
+from planning.model_provider import get_planning_llm, has_real_llm
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +113,55 @@ def _approx_tokens(*texts: str) -> int:
 
 def _est_cost_usd(tokens: int) -> float:
     return round(tokens * 0.00001, 4)
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit vs. genuine-failure classification
+# ---------------------------------------------------------------------------
+# A "FAIL" in this eval can mean two very different things: the method
+# genuinely produced a bad plan (a real signal about that method), or the
+# API throttled a call mid-run (an infra problem that says nothing about
+# the method). Blending them was silently corrupting the master table --
+# on one full run, 63/100 rows failed on a raw HTTP 429, none of which
+# reflect actual planning quality. classify_error() tags which is which,
+# and _call_with_retry() gives transient rate limits a real chance to
+# resolve themselves before a run is recorded as rate-limited at all.
+
+_RATE_LIMIT_MARKERS = ("429", "rate limit", "ratelimiterror", "too many requests")
+
+
+def classify_error(error_str: str | None) -> str | None:
+    """Returns None (success or a genuine no-exception failure), 'rate_limited',
+    or 'other_error', based on the exception text a run_* function captured."""
+    if not error_str:
+        return None
+    lowered = error_str.lower()
+    if any(marker in lowered for marker in _RATE_LIMIT_MARKERS):
+        return "rate_limited"
+    return "other_error"
+
+
+def _call_with_retry(fn, *args, max_retries: int = 4, base_delay: float = 20.0) -> dict:
+    """Calls fn(*args) -- one of the run_* functions below, each of which
+    already catches its own exceptions and returns a result dict rather
+    than raising. If the result looks rate-limited, retries with
+    exponential backoff (20s, 40s, 80s, 160s) before giving up, since a
+    real rate limit is transient and often succeeds on the next try.
+    Anything that isn't rate-limit-shaped (a genuine grounded failure, or
+    some other error) is returned immediately -- retrying those would
+    just waste quota on a problem retrying can't fix."""
+    result = fn(*args)
+    attempt = 0
+    while classify_error(result.get("error")) == "rate_limited" and attempt < max_retries:
+        delay = base_delay * (2 ** attempt)
+        print(f"        ↳ rate-limited, retrying in {delay:.0f}s "
+              f"(attempt {attempt + 1}/{max_retries})...")
+        time.sleep(delay)
+        result = fn(*args)
+        attempt += 1
+    result["error_type"] = classify_error(result.get("error"))
+    result["retries"] = attempt
+    return result
 
 
 class CallCounter:
@@ -349,12 +398,16 @@ def run_self_refine(case: dict, llm, env, label: str) -> dict:
         }
 
 
-def run_reflexion(case: dict, llm, env, label: str) -> dict:
+def run_reflexion(case: dict, llm, env, label: str, judge_llm=None) -> dict:
     counter = CallCounter(llm)
     t0 = time.time()
     try:
         env_arg = env if label == "Grounded" else None
-        res = reflexion(case["request"], counter, environment=env_arg, max_trials=3)
+        judge_counter = CallCounter(judge_llm) if judge_llm is not None else None
+        res = reflexion(
+            case["request"], counter, environment=env_arg, max_trials=3,
+            judge_llm=judge_counter,
+        )
         fb = res.trials[-1].feedback if res.trials else None
         score = fb.score if fb else 0.0
         return {
@@ -365,6 +418,7 @@ def run_reflexion(case: dict, llm, env, label: str) -> dict:
             "tokens": res.approx_tokens,
             "latency": round(time.time() - t0, 3),
             "cost": _est_cost_usd(res.approx_tokens),
+            "self_graded": res.self_graded,
         }
     except Exception as exc:
         return {
@@ -396,6 +450,27 @@ def main() -> None:
     grounded_env = IronBridgeEnvironment(success_threshold=0.35)
     ungrounded_env = RandomizedEnvironment(success_threshold=0.35)
 
+    # Independent judge for Reflexion's ungrounded self-evaluation --
+    # set JUDGE_GROQ_MODEL to a DIFFERENT model than GROQ_MODEL to get a
+    # genuinely independent grader (fixes the self-grading-bias gap: the
+    # same model judging its own attempt is a documented bias, not just
+    # a "same object reference" issue -- a fresh instance of the SAME
+    # model doesn't fix it, only a different model does). If unset,
+    # ungrounded Reflexion falls back to self-grading, but the result is
+    # tagged self_graded=True and reported as such below rather than
+    # silently blended in as if it were independent.
+    judge_model_name = os.environ.get("JUDGE_GROQ_MODEL")
+    judge_llm = None
+    if judge_model_name and has_real_llm():
+        from langchain_groq import ChatGroq
+        judge_llm = ChatGroq(
+            model=judge_model_name, api_key=os.environ["GROQ_API_KEY"], temperature=0.0,
+        )
+        print(f"[Judge] Using independent judge model for ungrounded Reflexion: {judge_model_name}")
+    else:
+        print("[Judge] JUDGE_GROQ_MODEL not set -- ungrounded Reflexion will self-grade "
+              "(flagged self_graded=True in results, not directly comparable to grounded scores)")
+
     artifacts_dir = ROOT_DIR / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -408,15 +483,22 @@ def main() -> None:
     # Rate limit protection: small pause after every individual method call
     # (a single case fires off ~30-40 LLM calls across all 10 methods, which
     # is enough on its own to blow through Groq's per-minute limit even with
-    # a pause between cases) plus a longer pause between cases.
+    # a pause between cases) plus a longer pause between cases. Static delays
+    # alone weren't enough (63/100 calls still hit a 429 on one full run) --
+    # _call_with_retry() below adds real backoff-and-retry on top of these.
     INTER_CALL_DELAY_SECONDS = 3
     INTER_CASE_DELAY_SECONDS = 10
 
     def _run_and_report(label: str, fn, *args) -> dict:
-        r = fn(*args)
+        r = _call_with_retry(fn, *args)
         all_results.append(r)
-        print(f"  {label}| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s")
-        if not r["success"] and r.get("error"):
+        tag = ""
+        if r.get("error_type") == "rate_limited":
+            tag = f" [RATE-LIMITED after {r.get('retries', 0)} retries -- excluded from accuracy]"
+        elif r.get("self_graded"):
+            tag = " [self-graded]"
+        print(f"  {label}| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s{tag}")
+        if not r["success"] and r.get("error") and r.get("error_type") != "rate_limited":
             print(f"        ↳ error: {r['error']}")
         time.sleep(INTER_CALL_DELAY_SECONDS)
         return r
@@ -438,7 +520,7 @@ def main() -> None:
         _run_and_report("SR-G", run_self_refine, case, llm, grounded_env, "Grounded")
         _run_and_report("SR-U", run_self_refine, case, llm, grounded_env, "Ungrounded")
         _run_and_report("Ref-G", run_reflexion, case, llm, grounded_env, "Grounded")
-        _run_and_report("Ref-U", run_reflexion, case, llm, grounded_env, "Ungrounded")
+        _run_and_report("Ref-U", run_reflexion, case, llm, grounded_env, "Ungrounded", judge_llm)
 
         # Rate limit protection: longer sleep between cases on top of the
         # per-call delay above
@@ -457,38 +539,57 @@ def main() -> None:
     table = []
     for method in methods:
         runs = [r for r in all_results if r["method"] == method]
-        successes = sum(1 for r in runs if r["success"])
         total = len(runs)
-        avg_calls = round(sum(r["llm_calls"] for r in runs) / total, 2) if total else 0
-        avg_tokens = round(sum(r["tokens"] for r in runs) / total, 1) if total else 0
-        avg_latency = round(sum(r["latency"] for r in runs) / total, 3) if total else 0
-        avg_score = round(sum(r["score"] for r in runs) / total, 3) if total else 0
-        total_cost = round(sum(r["cost"] for r in runs), 4)
+
+        # Rate-limited runs are infra noise, not a signal about the method
+        # -- excluded from success_rate / accuracy_pct / avg_score so a
+        # throttled API call can't drag a method's reported quality down.
+        # Still counted and shown separately so nothing is silently hidden.
+        rate_limited_runs = [r for r in runs if r.get("error_type") == "rate_limited"]
+        scored_runs = [r for r in runs if r.get("error_type") != "rate_limited"]
+        scored_total = len(scored_runs)
+
+        successes = sum(1 for r in scored_runs if r["success"])
+        avg_calls = round(sum(r["llm_calls"] for r in scored_runs) / scored_total, 2) if scored_total else 0
+        avg_tokens = round(sum(r["tokens"] for r in scored_runs) / scored_total, 1) if scored_total else 0
+        avg_latency = round(sum(r["latency"] for r in scored_runs) / scored_total, 3) if scored_total else 0
+        avg_score = round(sum(r["score"] for r in scored_runs) / scored_total, 3) if scored_total else 0
+        total_cost = round(sum(r["cost"] for r in runs), 4)  # cost includes retries -- real spend
+        self_graded = any(r.get("self_graded") for r in scored_runs)
+
         table.append({
             "method": method,
-            "success_rate": f"{successes}/{total}",
-            "accuracy_pct": round((successes / total) * 100, 1) if total else 0,
+            "success_rate": f"{successes}/{scored_total}",
+            "accuracy_pct": round((successes / scored_total) * 100, 1) if scored_total else 0,
             "avg_score": avg_score,
             "avg_llm_calls": avg_calls,
             "avg_tokens": avg_tokens,
             "avg_latency_sec": avg_latency,
             "total_est_cost_usd": total_cost,
+            "rate_limited_excluded": len(rate_limited_runs),
+            "self_graded": self_graded,
         })
 
-    print("\n" + "=" * 110)
+    print("\n" + "=" * 120)
     print("MASTER COMPARISON TABLE — ALL METHODS")
-    print("=" * 110)
+    print("(accuracy/score computed over non-rate-limited runs only; rate-limited runs shown separately)")
+    print("=" * 120)
     print(
         f"{'Method':<26} | {'Success':<8} | {'Acc%':<6} | {'Score':<6} | "
-        f"{'Calls':<6} | {'Tokens':<8} | {'Latency':<8} | {'Est. $':<8}"
+        f"{'Calls':<6} | {'Tokens':<8} | {'Latency':<8} | {'Est. $':<8} | {'RateLim':<7}"
     )
-    print("-" * 110)
+    print("-" * 120)
     for row in table:
+        flag = " *self-graded" if row["self_graded"] else ""
         print(
             f"{row['method']:<26} | {row['success_rate']:<8} | {row['accuracy_pct']:<6} | "
             f"{row['avg_score']:<6} | {row['avg_llm_calls']:<6} | {row['avg_tokens']:<8} | "
-            f"{row['avg_latency_sec']:<8} | {row['total_est_cost_usd']:<8}"
+            f"{row['avg_latency_sec']:<8} | {row['total_est_cost_usd']:<8} | {row['rate_limited_excluded']:<7}{flag}"
         )
+    if any(row["self_graded"] for row in table):
+        print("\n* self-graded: JUDGE_GROQ_MODEL was not set, so ungrounded Reflexion used the")
+        print("  SAME model to judge its own attempt -- a known bias, not directly comparable")
+        print("  to Reflexion (Grounded)'s real-DB-checked score.")
 
     # Routing recommendations
     print("\n" + "=" * 110)

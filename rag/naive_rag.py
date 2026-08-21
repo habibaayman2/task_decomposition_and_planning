@@ -23,7 +23,7 @@ SYSTEM_PROMPT = (
     "say so explicitly rather than guessing."
 )
 
-GROQ_MODEL = "llama-3.1-8b-instant"  # same as rest of repo
+GROQ_MODEL = "openai/gpt-oss-20b"  # same as rest of repo
 
 
 class NaiveRetriever:
