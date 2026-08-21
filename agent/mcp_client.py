@@ -149,7 +149,7 @@ def make_sampling_callback():
               f"{len(groq_messages)} message(s) ({params.maxTokens} max tokens)")
 
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             max_tokens=params.maxTokens or 512,
             messages=groq_messages,
         )
