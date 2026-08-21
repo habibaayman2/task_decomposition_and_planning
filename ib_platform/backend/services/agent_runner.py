@@ -37,9 +37,7 @@ STATIC_AGENT_ROSTER = [
     {"name": "equipment_recovery", "type": "state_graph", "description": "Equipment Breakdown Recovery", "status": "available"},
     {"name": "safety_incident", "type": "state_graph", "description": "Safety Incident Reporting", "status": "available"},
     {"name": "memory_rag", "type": "legacy", "description": "Memory & RAG Agent", "status": "available"},
-    {"name": "planning", "type": "legacy", "description": "Delay-Response Planning Agent", "status": "available"},
-]
-
+    {"name": "planning", "type": "legacy", "description": "Delay-Response Planning Agent", "status": "available"},]
 
 def _load_state_graph_agents():
     global _state_graph_agents
@@ -59,25 +57,36 @@ def _load_state_graph_agents():
             print(f"[agent_runner] {name} not loaded: {e}")
     return _state_graph_agents
 
+def _run_memory_rag_agent(message: str) -> str:
+    """Direct RAG wrapper for memory_rag_agent — no import of agent.py needed."""
+    from rag.hybrid_search import hybrid_rag_answer
+    result = hybrid_rag_answer(message, top_k=5)
+    return result["answer"]
 
+
+def _run_planning_agent_wrapper(message: str) -> str:
+    """Wrapper for planning_agent — loads file directly, bypasses package import."""
+    import asyncio
+    import importlib.util
+    import sys
+    
+    file_path = REPO_ROOT / "agent" / "planning_agent.py"
+    spec = importlib.util.spec_from_file_location("planning_agent_direct", str(file_path))
+    mod = importlib.util.module_from_spec(spec)
+    
+    # Prevent the module from trying to import 'agent' as a package
+    sys.modules["planning_agent_direct"] = mod
+    spec.loader.exec_module(mod)
+    
+    return asyncio.run(mod.run_planning_agent(message))
 def _load_legacy_agents():
     global _legacy_agents
     if _legacy_agents:
         return _legacy_agents
 
-    # agent/ has no __init__.py, so dotted imports like 'agent.agent' fail.
-    # We load the .py files directly with importlib so we don't depend on
-    # the directory being a package.
-    _load_legacy_module(
-        name="memory_rag",
-        file_path=REPO_ROOT / "agent" / "agent.py",
-        attr="run_agent",
-    )
-    _load_legacy_module(
-        name="planning",
-        file_path=REPO_ROOT / "agent" / "planning_agent.py",
-        attr="run_planning_agent",
-    )
+    _legacy_agents["memory_rag"] = _run_memory_rag_agent
+    _legacy_agents["planning"] = _run_planning_agent_wrapper
+
     return _legacy_agents
 
 
@@ -178,14 +187,8 @@ def run_legacy_agent(agent_name: str, message: str) -> Tuple[str, str]:
         # The memory_rag agent is the full interactive CLI loop (run_agent);
         # it cannot be called with a single message string.
         if asyncio.iscoroutinefunction(runner):
-            if agent_name == "planning":
-                response = asyncio.run(runner(message))
-                return "completed", str(response)
-            else:
-                return "error", (
-                    "Memory & RAG agent requires an interactive session. "
-                    "Run it directly with: python -m agent.agent"
-                )
+            response = asyncio.run(runner(message))
+            return "completed", str(response)
         else:
             response = runner(message)
             return "completed", str(response)

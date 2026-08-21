@@ -98,6 +98,8 @@ class FileBackend(RagBackend):
         self.sentinel_file = self.root / "invalidation_sentinel.txt"
 
         self.docs_dir.mkdir(parents=True, exist_ok=True)
+        self.policies_dir = self.root / "policies"
+        self.policies_dir.mkdir(parents=True, exist_ok=True)
 
     # -- helpers ----------------------------------------------------------
 
@@ -192,6 +194,9 @@ class FileBackend(RagBackend):
 
         with open(filepath, 'wb') as f:
             f.write(content)
+        # Also copy to policies/ so vector_store can index it
+        policy_path = self.policies_dir / filepath.name
+        shutil.copy2(filepath, policy_path)
 
         # Chunk and index
         try:
@@ -237,6 +242,10 @@ class FileBackend(RagBackend):
             filepath = self.docs_dir / filename
             if filepath.exists():
                 filepath.unlink()
+            # Also remove from policies/
+            policy_path = self.policies_dir / filename
+            if policy_path.exists():
+                policy_path.unlink()
 
         index = self._load_index()
         if doc_id in index.get("documents", {}):
@@ -435,7 +444,17 @@ async def add_rag_doc(
         raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
 
     # CRITICAL: invalidate cache so next query picks up the change
+       # CRITICAL: invalidate cache so next query picks up the change
     backend.invalidate()
+
+    # SYNC to Qdrant vector store (equipment_recovery reads from here)
+    try:
+        from rag.vector_store import add_document as vs_add
+        if result.get("filename"):
+            vs_add(result["filename"])
+    except Exception as e:
+        import warnings
+        warnings.warn(f"[rag_docs] Qdrant sync failed on add: {e}")
 
     return RagDocAddResponse(**result)
 
@@ -453,7 +472,19 @@ def remove_rag_doc(request: RagDocRemoveRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
     # CRITICAL: invalidate cache
+        # CRITICAL: invalidate cache
     backend.invalidate()
+
+    # SYNC to Qdrant vector store
+    try:
+        from rag.vector_store import remove_document as vs_remove
+        if result.get("filename"):
+            vs_remove(result["filename"])
+    except Exception as e:
+        import warnings
+        warnings.warn(f"[rag_docs] Qdrant sync failed on remove: {e}")
+    
+    
 
     return result
 

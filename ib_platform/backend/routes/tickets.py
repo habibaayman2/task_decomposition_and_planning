@@ -100,7 +100,7 @@ def list_tickets(filters: Optional[TicketFilter] = None):
     results: List[TicketOut] = []
     for row in rows:
         # Apply run_id filter
-        if filters.run_id and row.get("RunID") != filters.run_id:
+        if filters.run_id and row["RunID"] != filters.run_id:
             continue
 
         # Enrich with run state and graph name
@@ -130,10 +130,10 @@ def list_tickets(filters: Optional[TicketFilter] = None):
             run_id=row["RunID"],
             node_name=row["NodeName"],
             error_message=row["ErrorMessage"],
-            status=row.get("Status", "open"),
-            resolution=row.get("Resolution"),
-            created_at=row.get("CreatedAt"),
-            resolved_at=row.get("ResolvedAt"),
+            status=row["Status"],
+            resolution=row["Resolution"],
+            created_at=row["CreatedAt"],
+            resolved_at=row["ResolvedAt"],
             graph_name=graph_name,
             current_state=run_state,
         ))
@@ -178,10 +178,10 @@ def get_ticket(ticket_id: int):
         run_id=row["RunID"],
         node_name=row["NodeName"],
         error_message=row["ErrorMessage"],
-        status=row.get("Status", "open"),
-        resolution=row.get("Resolution"),
-        created_at=row.get("CreatedAt"),
-        resolved_at=row.get("ResolvedAt"),
+        status=row["Status"],
+        resolution=row["Resolution"],
+        created_at=row["CreatedAt"],
+        resolved_at=row["ResolvedAt"],
         graph_name=graph_name,
         current_state=run_state,
     )
@@ -209,7 +209,7 @@ def resolve_ticket(resolution: TicketResolution):
     if not row:
         raise HTTPException(status_code=404, detail=f"Ticket {resolution.ticket_id} not found")
 
-    if row.get("Status") == "resolved":
+    if row["Status"] == "resolved":
         raise HTTPException(status_code=400, detail=f"Ticket {resolution.ticket_id} is already resolved")
 
     # Resolve via checkpoint store
@@ -287,7 +287,7 @@ def mark_investigating(ticket_id: int, admin_id: int):
             ).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} not found")
-            if row.get("Status") == "resolved":
+            if row["Status"] == "resolved":
                 raise HTTPException(status_code=400, detail="Cannot investigate a resolved ticket")
 
             conn.execute(
