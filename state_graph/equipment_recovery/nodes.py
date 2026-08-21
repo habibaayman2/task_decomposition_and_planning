@@ -212,6 +212,7 @@ def approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
         # Under budget: no HITL needed, proceed straight to execution.
         return {"approval_status": "auto_approved", "hitl_decision": None}
     decision_key = f"hitl_decision__{state['proposed_action']}"
+    state["remaining_budget"] = remaining_budget
     decision = require_hitl(
         state,
         reason=(

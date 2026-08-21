@@ -59,68 +59,75 @@ class SessionOut(BaseModel):
 @router.post("/sessions", response_model=Dict[str, Any])
 def create_session(req: CreateSessionRequest):
     internal_name = _to_internal_name(req.agent_id)
-    
+
     if not (is_state_graph_agent(internal_name) or is_legacy_agent(internal_name)):
         raise HTTPException(status_code=404, detail=f"Agent '{req.agent_id}' not found")
-    
+
+    # Step 1: create the session row, then close this connection --
+    # before calling the graph, which opens its OWN connection to the
+    # same sqlite file to write checkpoints. Keeping this connection
+    # open while the graph runs caused "database is locked".
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO ChatSessions (UserID, AgentName, Status) VALUES (?, ?, ?)",
             (req.user_id, internal_name, "active"),
         )
         session_id = cur.lastrowid
-        
-        messages: List[MessageOut] = []
-        
-        if is_state_graph_agent(internal_name):
-            if req.initial_state is None:
-                raise HTTPException(status_code=400, detail=f"Agent '{req.agent_id}' requires initial_state")
-            
-            run_id, status, msg, full_state = run_state_graph_agent(
-                agent_name=internal_name,
-                initial_state=req.initial_state,
-            )
-            
+
+    status = "active"
+
+    if is_state_graph_agent(internal_name):
+        if req.initial_state is None:
+            raise HTTPException(status_code=400, detail=f"Agent '{req.agent_id}' requires initial_state")
+
+        # Step 2: run the graph with NO connection open on our side.
+        run_id, status, msg, full_state = run_state_graph_agent(
+            agent_name=internal_name,
+            initial_state=req.initial_state,
+        )
+
+        # Step 3: re-open a fresh connection to record the results.
+        with get_conn() as conn:
             conn.execute(
                 "UPDATE ChatSessions SET RunID = ?, Status = ? WHERE SessionID = ?",
                 (run_id, status, session_id),
             )
-            
             if req.first_message:
                 conn.execute(
                     "INSERT INTO ChatMessages (SessionID, Sender, Content) VALUES (?, ?, ?)",
                     (session_id, "user", req.first_message),
                 )
-            
             msg_type = "status_completed" if status == "completed" else f"status_{status}"
             conn.execute(
                 "INSERT INTO ChatMessages (SessionID, Sender, Content, MessageType) VALUES (?, ?, ?, ?)",
                 (session_id, "agent", msg, msg_type),
             )
-        else:
-            if req.first_message is None:
-                raise HTTPException(status_code=400, detail=f"Agent '{req.agent_id}' requires first_message")
-            
+    else:
+        if req.first_message is None:
+            raise HTTPException(status_code=400, detail=f"Agent '{req.agent_id}' requires first_message")
+
+        with get_conn() as conn:
             conn.execute(
                 "INSERT INTO ChatMessages (SessionID, Sender, Content) VALUES (?, ?, ?)",
                 (session_id, "user", req.first_message),
             )
-            
-            status, response = run_legacy_agent(internal_name, req.first_message)
-            
+
+        # legacy agent call also happens with no connection open.
+        status, response = run_legacy_agent(internal_name, req.first_message)
+
+        with get_conn() as conn:
             msg_type = "status_completed" if status == "completed" else "status_error"
             conn.execute(
                 "INSERT INTO ChatMessages (SessionID, Sender, Content, MessageType) VALUES (?, ?, ?, ?)",
                 (session_id, "agent", response, msg_type),
             )
-            
             conn.execute(
                 "UPDATE ChatSessions SET Status = ? WHERE SessionID = ?",
                 (status, session_id),
             )
-        
-        conn.commit()
-        
+
+    # Step 4: fresh connection just to read back the final message list.
+    with get_conn() as conn:
         rows = conn.execute(
             "SELECT MessageID, Sender, Content, MessageType, CreatedAt FROM ChatMessages "
             "WHERE SessionID = ? ORDER BY CreatedAt",
@@ -136,7 +143,7 @@ def create_session(req: CreateSessionRequest):
             )
             for r in rows
         ]
-    
+
     return {
         "session_id": session_id,
         "agent_id": req.agent_id,

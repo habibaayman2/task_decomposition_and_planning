@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS ChatSessions (
     AgentName TEXT NOT NULL,
     RunID TEXT,
     Status TEXT NOT NULL DEFAULT 'active'
-        CHECK (Status IN ('active', 'paused_hitl', 'ticket_open', 'closed')),
+        CHECK (Status IN ('active', 'paused_hitl', 'ticket_open', 'closed', 'error')),
     CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (UserID) REFERENCES Employees(EmployeeID)
