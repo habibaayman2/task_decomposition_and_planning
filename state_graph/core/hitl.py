@@ -55,6 +55,27 @@ def require_hitl(
             if decision == "approved":
                 return {"signoff": "approved"}
             return {"signoff": "rejected"}
+
+    CYCLE SAFETY (finalized Day 2, after a bug found reviewing A3's
+    change_order graph): if a graph can revisit a HITL node more than
+    once in the SAME run -- any real cycle, e.g. "sent back for more
+    review" -- do NOT rely on the default decision_key. Once a key is
+    written into state it stays there for the rest of the run (state
+    only ever merges, see graph_base.py); a revisit that reuses the
+    same key will see the OLD decision already present and skip the
+    pause entirely instead of asking a human again. That silently fakes
+    HITL on the second cycle -- exactly what the project brief
+    prohibits.
+
+    Scope decision_key to something that is unique to the SPECIFIC
+    pause, not just the run: an id that changes across cycles (e.g.
+    safety_incident's `f"hitl_decision_incident{id}_round{round}"`,
+    keyed on InvestigationRound, NOT on a resettable per-record Version
+    number -- a Version that resets to 1 on each new record collides
+    across different records). resolve_hitl_task() must be called with
+    that SAME decision_key (its default only matches an unscoped call);
+    the payload passed to open_hitl_task() should carry decision_key so
+    whichever platform route resolves the task can read it back.
     """
     if decision_key in state:
         return state[decision_key]
