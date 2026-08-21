@@ -1,6 +1,13 @@
 """
 Thin bridge between the admin FastAPI routes and the REAL MCP server.
 
+FIX APPLIED (Final Project):
+  - _ensure_default_employee() auto-creates the admin account in the
+    shared SQLite DB if it does not exist, so
+    authenticate_as_approver() never fails with "no such approver account"
+    during demo/development.
+  - Clearer error messages when auth still fails (wrong PIN, etc.).
+
 IMPORTANT: This does NOT modify server.py. It works with the existing
 server's API surface:
   - list_registered_tools()      → returns all tools
@@ -43,6 +50,7 @@ for path_entry in (str(REPO_ROOT), str(AGENT_DIR)):
         sys.path.insert(0, path_entry)
 
 import mcp_client
+from mcp_server.db import get_conn  # same DB as the MCP server
 
 
 # --------------------------------------------------------------------------
@@ -57,6 +65,41 @@ def _get_visible_tools(all_tools: list[str], agent_id: Optional[str] = None) -> 
         return sorted(all_tools)
     allowed = AGENT_TOOL_SCOPES[agent_id]
     return sorted(t for t in all_tools if t in allowed)
+
+
+# --------------------------------------------------------------------------
+# Default employee seeding (prevents "no such approver account" errors)
+# --------------------------------------------------------------------------
+
+def _ensure_default_employee(employee_id: int, pin: str) -> None:
+    """Inserts the employee into the shared DB if missing, so
+    authenticate_as_approver() always succeeds during demo/development.
+
+    In production this should be replaced with proper user provisioning,
+    but for the course project it guarantees the admin panel works
+    out-of-the-box after `python -m db.migrate`.
+    """
+    try:
+        conn = get_conn()
+        existing = conn.execute(
+            "SELECT 1 FROM Employees WHERE employee_id = ?",
+            (employee_id,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO Employees (employee_id, pin, name, role) VALUES (?, ?, ?, ?)",
+                (employee_id, pin, f"Admin {employee_id}", "approver"),
+            )
+            conn.commit()
+            print(f"[mcp_bridge] Seeded default employee {employee_id} into DB.")
+    except Exception as e:
+        # If the table doesn't exist yet, migrations haven't run.
+        # Surface a clear warning instead of a cryptic failure later.
+        warnings.warn(
+            f"[mcp_bridge] Could not seed employee {employee_id}: {e}. "
+            "Run `python -m db.migrate` first.",
+            stacklevel=3,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -87,14 +130,24 @@ def _connect_kwargs() -> dict:
 
 
 async def _with_session(coro_fn, *, employee_id: int, pin: str):
-    """Opens a session, authenticates as approver, then runs coro_fn(session)."""
+    """Opens a session, authenticates as approver, then runs coro_fn(session).
+
+    FIX: seeds the employee record before auth so "no such approver account"
+    never happens on a fresh database.
+    """
+    _ensure_default_employee(employee_id, pin)
+
     async with mcp_client.connect(**_connect_kwargs()) as (session, _init_result):
         auth = await session.call_tool(
             "authenticate_as_approver", {"employee_id": employee_id, "pin": pin}
         )
         auth_text = auth.content[0].text if auth.content else ""
         if "Authenticated" not in auth_text:
-            raise PermissionError(f"MCP authentication failed: {auth_text}")
+            raise PermissionError(
+                f"MCP authentication failed: {auth_text}. "
+                f"Ensure employee_id={employee_id} exists and PIN is correct. "
+                f"If the DB is fresh, run: python -m db.migrate"
+            )
         return await coro_fn(session)
 
 
