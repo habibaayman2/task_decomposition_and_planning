@@ -23,7 +23,7 @@ from rag.hybrid_search import HybridRetriever
 
 load_dotenv()
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "openai/gpt-oss-20b"
 MAX_HOPS = 3  # hard cap so the model can't loop forever
 
 
