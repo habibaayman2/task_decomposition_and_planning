@@ -2,69 +2,99 @@
 Agent Runner — bridge between platform backend and every live agent.
 """
 
+import sys
+from pathlib import Path
+
+# --------------------------------------------------------------------------
+# Path resolution (same pattern used by routes/agents.py, routes/tools.py, etc.)
+# --------------------------------------------------------------------------
+_current_file = Path(__file__).resolve()
+REPO_ROOT = next(
+    (p for p in [_current_file] + list(_current_file.parents) if (p / "mcp_server").exists()),
+    _current_file.parent.parent.parent
+)
+
+for path_entry in (str(REPO_ROOT), str(REPO_ROOT / "mcp_server")):
+    if path_entry not in sys.path:
+        sys.path.insert(0, path_entry)
+
+# --------------------------------------------------------------------------
+
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_server.db import get_conn
 
 _state_graph_agents: Dict[str, Any] = {}
+_legacy_agents: Dict[str, Any] = {}
+
+# Static fallback roster — always returned even if dynamic imports fail,
+# so the admin/user frontends never appear empty.
+STATIC_AGENT_ROSTER = [
+    {"name": "change_order", "type": "state_graph", "description": "Change Order Approval & Appeal", "status": "available"},
+    {"name": "equipment_recovery", "type": "state_graph", "description": "Equipment Breakdown Recovery", "status": "available"},
+    {"name": "safety_incident", "type": "state_graph", "description": "Safety Incident Reporting", "status": "available"},
+    {"name": "memory_rag", "type": "legacy", "description": "Memory & RAG Agent", "status": "available"},
+    {"name": "planning", "type": "legacy", "description": "Delay-Response Planning Agent", "status": "available"},
+]
 
 def _load_state_graph_agents():
     global _state_graph_agents
     if _state_graph_agents:
         return _state_graph_agents
-    try:
-        from state_graph.equipment_recovery.graph import build_equipment_recovery_graph
-        _state_graph_agents["equipment_recovery"] = build_equipment_recovery_graph()
-    except Exception as e:
-        print(f"[agent_runner] equipment_recovery not loaded: {e}")
-    try:
-        from state_graph.change_order.graph import build_change_order_graph
-        _state_graph_agents["change_order"] = build_change_order_graph()
-    except Exception as e:
-        print(f"[agent_runner] change_order not loaded: {e}")
-    try:
-        from state_graph.safety_incident.graph import build_safety_incident_graph
-        _state_graph_agents["safety_incident"] = build_safety_incident_graph()
-    except Exception as e:
-        print(f"[agent_runner] safety_incident not loaded: {e}")
+    loaders = [
+        ("equipment_recovery", "state_graph.equipment_recovery.graph", "build_equipment_recovery_graph"),
+        ("change_order", "state_graph.change_order.graph", "build_change_order_graph"),
+        ("safety_incident", "state_graph.safety_incident.graph", "build_safety_incident_graph"),
+    ]
+    for name, module, factory in loaders:
+        try:
+            mod = __import__(module, fromlist=[factory])
+            fn = getattr(mod, factory)
+            _state_graph_agents[name] = fn()
+        except Exception as e:
+            print(f"[agent_runner] {name} not loaded: {e}")
     return _state_graph_agents
-
-_legacy_agents: Dict[str, Any] = {}
 
 def _load_legacy_agents():
     global _legacy_agents
     if _legacy_agents:
         return _legacy_agents
-    try:
-        from agent.agent import run_agent as run_memory_rag
-        _legacy_agents["memory_rag"] = run_memory_rag
-    except Exception as e:
-        print(f"[agent_runner] memory_rag not loaded: {e}")
-    try:
-        from agent.planning_agent import run_agent as run_planning
-        _legacy_agents["planning"] = run_planning
-    except Exception as e:
-        print(f"[agent_runner] planning not loaded: {e}")
+    loaders = [
+        ("memory_rag", "agent.agent", "run_agent"),
+        ("planning", "agent.planning_agent", "run_agent"),
+    ]
+    for name, module, fn_name in loaders:
+        try:
+            mod = __import__(module, fromlist=[fn_name])
+            _legacy_agents[name] = getattr(mod, fn_name)
+        except Exception as e:
+            print(f"[agent_runner] {name} not loaded: {e}")
     return _legacy_agents
 
 def list_available_agents() -> List[Dict[str, Any]]:
-    agents = []
+    """Returns dynamically loaded agents, falling back to static roster
+    if nothing could be imported (so the UI never appears empty)."""
+    dynamic = []
     for name in _load_state_graph_agents().keys():
-        agents.append({
+        dynamic.append({
             "name": name,
             "type": "state_graph",
-            "description": f"{name.replace('_', ' ').title()} agent",
+            "description": name.replace("_", " ").title() + " agent",
             "status": "available"
         })
     for name in _load_legacy_agents().keys():
-        agents.append({
+        dynamic.append({
             "name": name,
             "type": "legacy",
-            "description": f"{name.replace('_', ' ').title()} agent",
+            "description": name.replace("_", " ").title() + " agent",
             "status": "available"
         })
-    return agents
+
+    # If dynamic loading failed entirely, return static roster so frontends work
+    if not dynamic:
+        return [dict(a) for a in STATIC_AGENT_ROSTER]
+    return dynamic
 
 def is_state_graph_agent(agent_name: str) -> bool:
     return agent_name in _load_state_graph_agents()
@@ -80,21 +110,21 @@ def run_state_graph_agent(
     graph = _load_state_graph_agents().get(agent_name)
     if graph is None:
         return "", "error", f"Agent '{agent_name}' is not available.", {}
-    
+
     run_id = run_id or str(uuid.uuid4())
-    
+
     try:
         final_state = graph.run(run_id=run_id, initial_state=initial_state)
     except Exception as e:
         return run_id, "error", f"Graph crashed: {str(e)}", {}
-    
+
     from state_graph.core.checkpoint_store import default_store
     loaded = default_store.load(run_id)
     if loaded is None:
         return run_id, "error", "Run disappeared from store.", {}
-    
+
     state, current_node, status = loaded
-    
+
     if status == "completed":
         msg = _format_completion_message(agent_name, state)
         return run_id, "completed", msg, state
