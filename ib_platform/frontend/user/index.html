@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>IronBridge — Chat</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            background: #f5f4f0;
+            color: #222;
+        }
+
+        /* ---------- Sidebar: agent switcher ---------- */
+        #sidebar {
+            width: 260px;
+            background: #1f1f1d;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        #sidebar h1 {
+            font-size: 16px;
+            font-weight: 600;
+            padding: 16px;
+            margin: 0;
+            border-bottom: 1px solid #333;
+        }
+
+        #agent-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .agent-btn {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: #ccc;
+            padding: 10px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .agent-btn:hover {
+            background: #2c2c2a;
+        }
+
+        .agent-btn.active {
+            background: #3c3489;
+            color: #fff;
+        }
+
+        .agent-btn .agent-desc {
+            display: block;
+            font-size: 11px;
+            color: #999;
+            margin-top: 2px;
+        }
+
+        .agent-btn.active .agent-desc {
+            color: #cfcbf6;
+        }
+
+        .badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 10px;
+            margin-left: 6px;
+            background: #444;
+        }
+
+        .badge.state_graph {
+            background: #0f6e56;
+        }
+
+        #user-id-box {
+            padding: 12px;
+            border-top: 1px solid #333;
+            font-size: 12px;
+            color: #999;
+        }
+
+        #user-id-box input {
+            width: 100%;
+            margin-top: 4px;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #2c2c2a;
+            color: #eee;
+        }
+
+        /* ---------- Main chat area ---------- */
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        #chat-header {
+            padding: 14px 20px;
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            font-weight: 600;
+        }
+
+        #chat-header .sub {
+            font-weight: 400;
+            font-size: 12px;
+            color: #777;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .msg {
+            max-width: 65%;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .msg.user {
+            align-self: flex-end;
+            background: #3c3489;
+            color: #fff;
+        }
+
+        .msg.agent {
+            align-self: flex-start;
+            background: #fff;
+            border: 1px solid #ddd;
+        }
+
+        .msg.status_hitl {
+            align-self: center;
+            background: #faeeda;
+            border: 1px solid #f0997b;
+            color: #712b13;
+            font-size: 13px;
+        }
+
+        .msg.status_ticket {
+            align-self: center;
+            background: #fcebeb;
+            border: 1px solid #f09595;
+            color: #791f1f;
+            font-size: 13px;
+        }
+
+        .msg.status_completed {
+            align-self: center;
+            background: #eaf3de;
+            border: 1px solid #97c459;
+            color: #27500a;
+            font-size: 13px;
+        }
+
+        .msg.system {
+            align-self: center;
+            color: #999;
+            font-size: 12px;
+            font-style: italic;
+        }
+
+        #placeholder {
+            margin: auto;
+            text-align: center;
+            color: #999;
+        }
+
+        /* ---------- Intake form (state-graph agents, first message) ---------- */
+        #intake-form {
+            padding: 14px 20px;
+            background: #fff;
+            border-top: 1px solid #ddd;
+            display: none;
+        }
+
+        #intake-form textarea {
+            width: 100%;
+            height: 60px;
+            resize: none;
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        #intake-form .hint {
+            font-size: 11px;
+            color: #999;
+            margin: 4px 0 8px;
+        }
+
+        #intake-form button {
+            padding: 8px 20px;
+            background: #3c3489;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        /* ---------- Regular composer ---------- */
+        #composer {
+            padding: 14px 20px;
+            background: #fff;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+        }
+
+        #composer input {
+            flex: 1;
+            padding: 10px 14px;
+            border-radius: 20px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+        }
+
+        #composer button {
+            padding: 10px 20px;
+            background: #3c3489;
+            color: #fff;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        #composer button:disabled,
+        #intake-form button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #error-banner {
+            display: none;
+            background: #fcebeb;
+            color: #791f1f;
+            padding: 8px 20px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="sidebar">
+        <h1>IronBridge agents</h1>
+        <div id="agent-list">Loading agents…</div>
+        <div id="user-id-box">
+            User ID
+            <input id="user-id-input" type="number" value="1" min="1">
+        </div>
+    </div>
+
+    <div id="main">
+        <div id="error-banner"></div>
+        <div id="chat-header">
+            <span id="chat-title">Select an agent to start</span>
+            <div class="sub" id="chat-sub"></div>
+        </div>
+
+        <div id="messages">
+            <div id="placeholder">Pick an agent on the left to begin a conversation.</div>
+        </div>
+
+        <!-- Shown only for state-graph agents starting a NEW session -->
+        <div id="intake-form">
+            <div class="hint" id="intake-hint">Describe the situation in plain language — the agent will figure out the
+                structured details.</div>
+            <textarea id="intake-text"
+                placeholder="e.g. Excavator number 1 at Riverside Tower is making a loud grinding noise, project 1."></textarea>
+            <div style="margin-top:8px;"><button id="intake-send">Start</button></div>
+        </div>
+
+        <div id="composer">
+            <input id="composer-input" type="text" placeholder="Type a message…" disabled>
+            <button id="composer-send" disabled>Send</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://localhost:8000";
+
+        let agents = [];
+        let activeAgent = null;   // full agent object from /api/agents
+        let activeSession = null; // {session_id, status, ...}
+
+        const elAgentList = document.getElementById("agent-list");
+        const elMessages = document.getElementById("messages");
+        const elChatTitle = document.getElementById("chat-title");
+        const elChatSub = document.getElementById("chat-sub");
+        const elIntakeForm = document.getElementById("intake-form");
+        const elIntakeText = document.getElementById("intake-text");
+        const elIntakeSend = document.getElementById("intake-send");
+        const elComposer = document.getElementById("composer");
+        const elComposerInput = document.getElementById("composer-input");
+        const elComposerSend = document.getElementById("composer-send");
+        const elErrorBanner = document.getElementById("error-banner");
+        const elUserIdInput = document.getElementById("user-id-input");
+
+        function showError(msg) {
+            elErrorBanner.textContent = msg;
+            elErrorBanner.style.display = "block";
+            setTimeout(() => { elErrorBanner.style.display = "none"; }, 6000);
+        }
+
+        async function apiFetch(path, options = {}) {
+            const res = await fetch(API_BASE + path, {
+                headers: { "Content-Type": "application/json" },
+                ...options,
+            });
+            if (!res.ok) {
+                const body = await res.text();
+                throw new Error(`${res.status}: ${body}`);
+            }
+            return res.json();
+        }
+
+        // ---------- Load agents on page load ----------
+        async function loadAgents() {
+            try {
+                const data = await apiFetch("/api/agents");
+                agents = data.agents || [];
+                renderAgentList();
+            } catch (e) {
+                elAgentList.textContent = "Could not load agents.";
+                showError("Failed to load agents: " + e.message + " — is the backend running on :8000?");
+            }
+        }
+
+        function renderAgentList() {
+            elAgentList.innerHTML = "";
+            agents.forEach(agent => {
+                const btn = document.createElement("button");
+                btn.className = "agent-btn" + (activeAgent && activeAgent.agent_id === agent.agent_id ? " active" : "");
+                btn.innerHTML = `${agent.label}<span class="badge ${agent.type}">${agent.type === "state_graph" ? "graph" : "agent"}</span>` +
+                    `<span class="agent-desc">${agent.description || ""}</span>`;
+                btn.onclick = () => selectAgent(agent);
+                elAgentList.appendChild(btn);
+            });
+        }
+
+        // ---------- Selecting an agent ----------
+        function selectAgent(agent) {
+            activeAgent = agent;
+            activeSession = null;
+            renderAgentList();
+
+            elChatTitle.textContent = agent.label;
+            elChatSub.textContent = agent.description || "";
+            elMessages.innerHTML = `<div id="placeholder">Starting a new conversation with ${agent.label}…</div>`;
+
+            if (agent.type === "state_graph") {
+                // needs structured/free-text intake before a session can exist
+                elIntakeForm.style.display = "block";
+                elComposer.style.display = "none";
+                elMessages.innerHTML = "";
+            } else {
+                // legacy agent: plain chat, no intake form
+                elIntakeForm.style.display = "none";
+                elComposer.style.display = "flex";
+                elComposerInput.disabled = false;
+                elComposerSend.disabled = false;
+                elMessages.innerHTML = `<div id="placeholder">Say hello to ${agent.label} to begin.</div>`;
+            }
+        }
+
+        // ---------- Rendering messages ----------
+        function renderMessages(messages) {
+            elMessages.innerHTML = "";
+            if (!messages.length) {
+                elMessages.innerHTML = `<div id="placeholder">No messages yet.</div>`;
+                return;
+            }
+            messages.forEach(m => appendMessageBubble(m));
+            elMessages.scrollTop = elMessages.scrollHeight;
+        }
+
+        function appendMessageBubble(m) {
+            const div = document.createElement("div");
+            const type = m.message_type && m.message_type.startsWith("status_") ? m.message_type : m.sender;
+            div.className = "msg " + type;
+            div.textContent = m.content;
+            elMessages.appendChild(div);
+            elMessages.scrollTop = elMessages.scrollHeight;
+        }
+
+        // ---------- Starting a session for a state-graph agent (free text) ----------
+        elIntakeSend.onclick = async () => {
+            const text = elIntakeText.value.trim();
+            if (!text) { showError("Type a description first."); return; }
+            if (!activeAgent) return;
+
+            elIntakeSend.disabled = true;
+            elIntakeSend.textContent = "Starting…";
+            try {
+                const userId = parseInt(elUserIdInput.value, 10) || 1;
+                const data = await apiFetch("/api/chat/sessions", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        agent_id: activeAgent.agent_id,
+                        user_id: userId,
+                        initial_state: { request: text },   // free-text path -> LLM decomposition
+                        first_message: text,
+                    }),
+                });
+                activeSession = { session_id: data.session_id, status: data.status };
+                renderMessages(data.messages || []);
+
+                // switch to normal composer for any follow-up (e.g. after HITL resolves)
+                elIntakeForm.style.display = "none";
+                elComposer.style.display = "flex";
+                elComposerInput.disabled = false;
+                elComposerSend.disabled = false;
+            } catch (e) {
+                showError("Could not start session: " + e.message);
+            } finally {
+                elIntakeSend.disabled = false;
+                elIntakeSend.textContent = "Start";
+                elIntakeText.value = "";
+            }
+        };
+
+        // ---------- Sending a message in an existing session (legacy agents + follow-ups) ----------
+        async function sendMessage() {
+            const text = elComposerInput.value.trim();
+            if (!text || !activeAgent) return;
+
+            elComposerInput.disabled = true;
+            elComposerSend.disabled = true;
+
+            try {
+                if (!activeSession) {
+                    // first message for a legacy agent: creates the session
+                    const userId = parseInt(elUserIdInput.value, 10) || 1;
+                    const data = await apiFetch("/api/chat/sessions", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            agent_id: activeAgent.agent_id,
+                            user_id: userId,
+                            first_message: text,
+                        }),
+                    });
+                    activeSession = { session_id: data.session_id, status: data.status };
+                    renderMessages(data.messages || []);
+                } else {
+                    // existing session: append a message
+                    appendMessageBubble({ sender: "user", content: text, message_type: "user" });
+                    const data = await apiFetch(`/api/chat/sessions/${activeSession.session_id}/messages`, {
+                        method: "POST",
+                        body: JSON.stringify({ content: text }),
+                    });
+                    activeSession.status = data.status;
+                    appendMessageBubble({ sender: "agent", content: data.reply, message_type: "status_" + data.status });
+                }
+            } catch (e) {
+                showError("Message failed: " + e.message);
+            } finally {
+                elComposerInput.value = "";
+                elComposerInput.disabled = false;
+                elComposerSend.disabled = false;
+                elComposerInput.focus();
+            }
+        }
+
+        elComposerSend.onclick = sendMessage;
+        elComposerInput.addEventListener("keydown", e => {
+            if (e.key === "Enter") sendMessage();
+        });
+
+        loadAgents();
+    </script>
+
+</body>
+
+</html>

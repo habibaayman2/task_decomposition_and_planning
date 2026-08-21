@@ -41,7 +41,7 @@ def _find_db_path() -> str:
       3. If none of those already exist, fall back to cwd/db/procurement.db
          so a fresh `build_db.py` run has a predictable place to create it.
     """
-    env_path = os.environ.get("DB_PATH")
+    env_path = os.environ.get("IRONBRIDGE_DB_PATH")
     if env_path:
         return env_path
 
@@ -190,7 +190,25 @@ def create_purchase_request(project_id, employee_id, material_id, quantity):
 
 def approve_purchase_request(request_id: int, approver_id: int):
     with get_conn() as conn:
+        req = conn.execute(
+            "SELECT ProjectID, EstimatedCost FROM PurchaseRequests WHERE RequestID = ?",
+            (request_id,),
+        ).fetchone()
+        if req is None:
+            raise ValueError(f"Unknown RequestID {request_id}")
         conn.execute("UPDATE PurchaseRequests SET Status = 'Approved' WHERE RequestID = ?", (request_id,))
+        # Approval is the point budget actually gets committed (an
+        # escalated request never reaches this path — see
+        # validate_request_pending, which requires Status='Pending' — so
+        # there's no double-counting between escalation and approval).
+        # Without this, RemainingBudget never moves and
+        # validation.validate_within_budget's "hard block" becomes a
+        # no-op after the first approval: it keeps comparing new
+        # requests against a remaining-budget figure that never shrinks.
+        conn.execute(
+            "UPDATE Projects SET RemainingBudget = RemainingBudget - ? WHERE ProjectID = ?",
+            (req["EstimatedCost"], req["ProjectID"]),
+        )
         log_action(conn, approver_id, "approve_purchase_request", request_id, "approved")
 
 

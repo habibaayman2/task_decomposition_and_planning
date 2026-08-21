@@ -26,7 +26,9 @@ _warned = False
 
 
 def has_real_llm() -> bool:
-    return bool(os.environ.get("GROQ_API_KEY"))
+     import os
+   
+     return bool(os.environ.get("GROQ_API_KEY"))
 
 
 def _warn_once():
@@ -301,20 +303,24 @@ def _propose_plan(project_id: int) -> str:
     )
 
 
-def get_planning_llm() -> BaseChatModel:
+def get_planning_llm(model: Optional[str] = None) -> BaseChatModel:
+    """
+    تعديل الوظيفة لتقبل متغير model الممرر من الـ CLI
+    """
     if has_real_llm():
         try:
             from langchain_groq import ChatGroq
-            model_name = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+
+            model_name = model or os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+
             return ChatGroq(
                 model=model_name,
                 api_key=os.environ["GROQ_API_KEY"],
                 temperature=0.2,
             )
         except ImportError:
-            print(
-                "[Warning] GROQ_API_KEY is set, but 'langchain_groq' is not installed. "
-                "Install it with: pip install langchain-groq"
-            )
+            print("[Warning] langchain_groq not installed.")
+
+    # إذا لم يوجد API Key نستخدم الموديل الوهمي
     _warn_once()
     return DeterministicPlanningLLM(call_count=[0])

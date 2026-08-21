@@ -112,12 +112,13 @@ def generate_answer(query: str, retrieved_chunks: list[dict]) -> str:
     )
     return response.choices[0].message.content
 
-
+_GLOBAL_RETRIEVER = None
 def hybrid_rag_answer(query: str, top_k: int = 5) -> dict:
     """Full pipeline: hybrid retrieve, then generate, then verify with
     Person 1's Self-RAG checker before the answer is considered final.
     Both checks are logged with a visible pass/fail, not silently
     trusted."""
+    
     retriever = HybridRetriever()
     retrieved = retriever.search(query, top_k=top_k)
 

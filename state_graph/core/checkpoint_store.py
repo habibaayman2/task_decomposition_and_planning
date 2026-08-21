@@ -169,6 +169,10 @@ class CheckpointStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def _get_conn(self):
+        """Expose the connection context manager for external SQL."""
+        return get_conn()
+    
 
 # Shared default instance -- graphs can pass their own, but sharing one
 # keeps things simple for Day 2/3 node authors who don't need to think
