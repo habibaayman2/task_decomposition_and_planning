@@ -242,6 +242,47 @@ def _parse_decomposition_response(response: str) -> Dict[str, Any]:
             f"LLM decomposition missing fields: {missing}",
             context={"llm_response": response[:500], "parsed": parsed},
         )
+    # Check for unresolved required fields BEFORE attempting numeric
+    # coercion, so the error message tells the user what's missing
+    # in plain language instead of a raw Python TypeError.
+    field_hints = {
+        "project_id": "which project this affects (e.g. 'project 1')",
+        "cost_delta": "the estimated cost impact (a dollar amount)",
+        "schedule_delta_days": "the schedule impact in days",
+        "employee_id": "who is submitting this request",
+    }
+    unresolved = [
+        k for k in ("project_id", "cost_delta", "schedule_delta_days", "employee_id")
+        if parsed.get(k) is None
+    ]
+    if unresolved:
+        needed = ", ".join(field_hints[k] for k in unresolved)
+        raise TicketableError(
+            f"Could not determine {needed} from your message. "
+            f"Please include these details and try again.",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
+
+    # Check for unresolved required fields BEFORE attempting numeric
+    # coercion, so the error message tells the user what's missing
+    # in plain language instead of a raw Python TypeError.
+    field_hints = {
+        "project_id": "which project this affects (e.g. 'project 1')",
+        "cost_delta": "the estimated cost impact (a dollar amount)",
+        "schedule_delta_days": "the schedule impact in days",
+        "employee_id": "who is submitting this request",
+    }
+    unresolved = [
+        k for k in ("project_id", "cost_delta", "schedule_delta_days", "employee_id")
+        if parsed.get(k) is None
+    ]
+    if unresolved:
+        needed = ", ".join(field_hints[k] for k in unresolved)
+        raise TicketableError(
+            f"Could not determine {needed} from your message. "
+            f"Please include these details and try again.",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
 
     # Type coercion with clear error messages
     try:
@@ -256,8 +297,7 @@ def _parse_decomposition_response(response: str) -> Dict[str, Any]:
         raise TicketableError(
             f"LLM decomposition field type error: {exc}",
             context={"llm_response": response[:500], "parsed": parsed},
-        )
-
+        ) 
 
 # ==========================================================================
 # NODE 2 — CONSTRAINED ReAct (LLM Addition #2)
