@@ -1,7 +1,7 @@
 # IronBridge AI Operations Platform
 
-&gt; **Company:** IronBridge Construction  
-&gt; **System:** Multi-Agent AI Platform with Persistent State, Human Oversight, and Live Operations Management
+> **Company:** IronBridge Construction  
+> **System:** Multi-Agent AI Platform with Persistent State, Human Oversight, and Live Operations Management
 
 ---
 
@@ -124,3 +124,200 @@ Tickets and HITL tasks follow different code paths, have different database tabl
 ---
 
 ## Repository Map
+
+```
+.
+├── agent/                          # Agent layer
+│   ├── agent.py                    # Memory & RAG agent (Week 3)
+│   ├── planning_agent.py           # Delay-response planning agent (Week 4)
+│   ├── mcp_client.py               # Shared MCP client
+│   └── demo_scenario.py            # End-to-end demo scripts
+│
+├── mcp_server/                     # Shared MCP server
+│   ├── server.py                   # Tool definitions and MCP protocol
+│   ├── db.py                       # Database access layer
+│   ├── http_app.py                 # HTTP bridge for platform integration
+│   └── validation.py               # Input validation
+│
+├── db/                             # Database
+│   ├── schema.sql                  # Core operational schema
+│   ├── state_graph_schema.sql      # Checkpoint, HITL, and ticket tables
+│   ├── chat_schema.sql             # Chat message persistence
+│   ├── seed.sql                    # Demo data
+│   └── procurement.db              # Live SQLite database
+│
+├── memory/                         # Episodic memory (Week 3)
+├── rag/                            # Retrieval & vector store (Week 3)
+├── planning/                       # Planning algorithms (Week 4)
+│   ├── algorithms/                 # Decomposition, ToT, LATS, Reflexion, etc.
+│   ├── models.py                   # Plan, Task, DAG structures
+│   └── router.py                   # Sub-task routing
+│
+├── state_graph/                    # Stateful agents (Week 5)
+│   ├── core/                       # Shared infrastructure
+│   │   ├── checkpoint_store.py     # Durable checkpointing
+│   │   ├── graph_base.py           # StateGraph engine
+│   │   ├── hitl.py                 # Human-in-the-loop primitives
+│   │   ├── tickets.py              # Failure ticket primitives
+│   │   └── models.py               # Shared state models
+│   ├── change_order/               # Change-order negotiation graph
+│   ├── equipment_recovery/         # Equipment recovery graph
+│   └── safety_incident/            # Safety incident response graph
+│
+├── ib_platform/                    # Web platform (Week 5)
+│   ├── backend/
+│   │   ├── app.py                  # FastAPI/Flask application entry
+│   │   ├── mcp_bridge.py           # Runtime tool management bridge
+│   │   ├── routes/
+│   │   │   ├── agents.py           # Agent listing and configuration
+│   │   │   ├── chat.py             # User chat endpoints
+│   │   │   ├── tools.py            # Tool add/remove endpoints
+│   │   │   ├── rag_docs.py         # Document upload/remove endpoints
+│   │   │   ├── hitl.py             # HITL task resolution endpoints
+│   │   │   └── tickets.py          # Ticket resolution endpoints
+│   │   └── services/
+│   │       └── agent_runner.py     # Agent execution service
+│   └── frontend/
+│       ├── index.html              # Landing page
+│       ├── admin/
+│       │   └── admin_panel.html    # Admin dashboard
+│       └── user/
+│           └── index.html          # User chat interface
+│
+├── planning_eval/                  # Planning evaluation suite
+├── context_eval/                   # RAG context evaluation
+├── retrieval_eval/                 # Retrieval evaluation
+└── tests/                          # Unit and integration tests
+```
+
+---
+
+## How to Run
+
+### 1. Environment Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/habibaayman2/task_decomposition_and_planning.git
+cd task_decomposition_and_planning
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -r mcp_server/requirements.txt
+pip install -r agent/requirements.txt
+pip install -r ib_platform/backend/requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your credentials
+```
+
+Required environment variables:
+```
+GROQ_API_KEY=your_groq_key
+GROQ_MODEL=llama-3.3-70b-versatile
+IRONBRIDGE_DB_PATH=./db/procurement.db
+IRONBRIDGE_DB_ENGINE=sqlite
+```
+
+### 2. Database Initialization
+
+```bash
+# Build the core database
+python -m db.build_db
+
+# Add state-graph tables
+python -m db.migrate_state_graph
+```
+
+### 3. Start the MCP Server
+
+```bash
+python -m mcp_server.server
+```
+
+### 4. Start the Platform Backend
+
+```bash
+cd ib_platform/backend
+python app.py
+```
+
+### 5. Open the Platform
+
+- **User Interface:** Open `ib_platform/frontend/user/index.html` in a browser (or serve via `python -m http.server`)
+- **Admin Panel:** Open `ib_platform/frontend/admin/admin_panel.html` in a browser
+
+### 6. Run Individual Agents
+
+```bash
+# Memory & RAG agent
+python -m agent.agent
+
+# Planning agent
+python -m agent.planning_agent
+
+# State-graph demos
+python -m state_graph.change_order.demo
+python -m state_graph.demo_crash_resume run demo-1
+```
+
+---
+
+## Demo Evidence
+
+### Crash and Resume
+
+```bash
+python -m state_graph.demo_crash_resume run demo-1
+# Wait for "[step_two] ... kill me now", then press Ctrl+C
+python -m state_graph.demo_crash_resume run demo-1
+# Observe: resumes from step_two, does not re-run step_one
+```
+
+### HITL Resolution Through the Platform
+
+1. Start a change-order negotiation that exceeds the budget threshold.
+2. The graph pauses at the HITL node and opens a task in the admin inbox.
+3. The administrator opens the task, sees the estimated cost and project context, and clicks **Approve** or **Reject**.
+4. The graph resumes, incorporating the administrator's decision into its state, and proceeds to execute or cancel the change order.
+
+### Ticket Recovery
+
+1. Start an equipment recovery run.
+2. Simulate a vendor API failure during the rental search node.
+3. The node throws an exception, the runner checkpoints, and a ticket appears on the ticket board with status `open`.
+4. The administrator inspects the checkpointed state, identifies the vendor outage, and clicks **Resolve** after the vendor comes back online.
+5. The run resumes from the same node, re-executes the rental search, and continues.
+
+---
+
+## What Was Corrected and Extended
+
+This project extends the work from the prior three phases of development. Rather than starting fresh, every prior component was reviewed, corrected, and integrated:
+
+- **MCP Server:** Tool schemas were tightened, error handling was improved, and runtime tool registration was added to support the admin panel's live configuration.
+- **Memory & RAG:** The retrieval pipeline was verified against the actual document store used by the platform. Document add/remove operations from the admin panel correctly invalidate and refresh the vector index.
+- **Planning Agent:** The routing logic between planning and RAG requests was hardened. Fallback behavior on API rate limits was improved so the user always receives a response.
+- **Database:** All new tables (checkpoints, HITL tasks, tickets, chat messages) live in the same database as the original procurement schema. No parallel stores were created.
+
+---
+
+## Team and Contributions
+
+This system was built as a collaborative effort across multiple development phases. Every component has a clear owner, traceable through the GitHub issue tracker and linked pull requests. Issues were opened with real operational rationale — for example, "the office manager currently has no way to see why a change-order graph stalled for three days, and a stalled approval past the client's decision window loses the contract entirely" — rather than generic feature requests.
+
+| Concern | Owner |
+|:---|:---|
+| Change-Order State Graph | Team Member A |
+| Equipment Recovery State Graph | Team Member B |
+| Safety Incident State Graph | Team Member C |
+| Checkpointing & Core Infrastructure | Shared |
+| Platform Backend (API) | Shared |
+| Platform Frontend (Admin) | Shared |
+| Platform Frontend (User Chat) | Shared |
+| MCP Server Corrections | Shared |
+| RAG Integration Corrections | Shared |
+
+---
+
