@@ -1,0 +1,26 @@
+{
+  "documents": {
+    "test-doc-123": {
+      "filename": "test_policy.md",
+      "title": "test_policy",
+      "chunks": [
+        "This is a test equipment manual about hydraulic failure."
+      ],
+      "chunk_count": 1,
+      "indexed_at": "2026-08-21T15:39:43.932800Z",
+      "file_size": 56
+    },
+    "ad1f2af7197f8ab6": {
+      "filename": "test_hydraulic.md",
+      "title": "test",
+      "chunks": [
+        "Equipment Manual: Hydraulic Failure\nIf the crane shows hydraulic failure, the likely cause is a leaking seal in the main cylinder.\nSafety procedure: Isolate the system and replace the seal."
+      ],
+      "chunk_count": 1,
+      "indexed_at": "2026-08-21T15:48:09.429534Z",
+      "file_size": 191
+    }
+  },
+  "version": 3,
+  "last_updated": "2026-08-21T15:48:09.429534Z"
+}

@@ -437,6 +437,7 @@
                 });
                 activeSession = { session_id: data.session_id, status: data.status };
                 renderMessages(data.messages || []);
+                startPollingIfNeeded();
 
                 // switch to normal composer for any follow-up (e.g. after HITL resolves)
                 elIntakeForm.style.display = "none";
@@ -474,6 +475,7 @@
                     });
                     activeSession = { session_id: data.session_id, status: data.status };
                     renderMessages(data.messages || []);
+                    startPollingIfNeeded();
                 } else {
                     // existing session: append a message
                     appendMessageBubble({ sender: "user", content: text, message_type: "user" });
@@ -500,6 +502,39 @@
         });
 
         loadAgents();
+
+
+        let pollInterval = null;
+
+        function startPollingIfNeeded() {
+            if (pollInterval) clearInterval(pollInterval);
+            if (!activeSession) return;
+            if (activeSession.status !== "paused_hitl" && activeSession.status !== "ticket_open") return;
+
+            let lastMessageCount = elMessages.children.length;
+
+            pollInterval = setInterval(async () => {
+                try {
+                    const messages = await apiFetch(`/api/chat/sessions/${activeSession.session_id}/messages`);
+                    if (messages.length > lastMessageCount) {
+                        renderMessages(messages);
+                        lastMessageCount = messages.length;
+                        const latestStatus = messages[messages.length - 1].message_type;
+                        if (latestStatus === "status_completed" || !latestStatus.startsWith("status_hitl") &&
+                            !latestStatus.startsWith("status_ticket")) {
+                            clearInterval(pollInterval);
+                            pollInterval = null;
+                            elComposerInput.disabled = false;
+                            elComposerSend.disabled = false;
+                        }
+                    }
+                }
+                catch (e) {
+                    console.error("Polling failed:", e);
+                }
+            }, 3000);
+        }
+
     </script>
 
 </body>

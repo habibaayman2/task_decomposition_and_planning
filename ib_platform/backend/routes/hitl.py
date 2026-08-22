@@ -225,7 +225,51 @@ def resolve_hitl_task(resolution: HITLResolution):
         pass
 
     # Resume the graph
+        # Resume the graph
     resumed_state = _resume_graph(run_id, graph_name)
+
+    # Write the outcome back into ChatMessages / ChatSessions so the
+    # user actually sees the result of the admin's decision in their
+    # chat thread -- the graph resuming successfully server-side isn't
+    # enough on its own; per the project brief, "the resumed run must
+    # pick up the admin's decision, not just proceed as if nothing
+    # happened" from the USER's perspective too, not just the DB.
+    final_status = default_store.load(run_id)
+    if final_status:
+        _, _, new_status = final_status
+
+        with default_store._get_conn() as conn:
+            session_row = conn.execute(
+                "SELECT SessionID FROM ChatSessions WHERE RunID = ?", (run_id,)
+            ).fetchone()
+
+            if session_row:
+                session_id = session_row["SessionID"]
+
+                if new_status == "completed":
+                    msg = f"✅ Admin {resolution.decision} the request. " + (
+                        f"Result: {resumed_state.get('execution_result', 'Task completed.')}"
+                    )
+                    msg_type = "status_completed"
+                elif new_status == "paused_hitl":
+                    msg = "⏸️ Admin decision recorded, but a new approval is needed for the next proposal."
+                    msg_type = "status_paused_hitl"
+                elif new_status == "ticket_open":
+                    msg = "⚠️ An error occurred while resuming. A new support ticket has been opened."
+                    msg_type = "status_ticket"
+                else:
+                    msg = f"Run status updated to: {new_status}"
+                    msg_type = "text"
+
+                conn.execute(
+                    "INSERT INTO ChatMessages (SessionID, Sender, Content, MessageType) "
+                    "VALUES (?, ?, ?, ?)",
+                    (session_id, "agent", msg, msg_type),
+                )
+                conn.execute(
+                    "UPDATE ChatSessions SET Status = ? WHERE SessionID = ?",
+                    (new_status, session_id),
+                )
 
     return {
         "task_id": resolution.task_id,
@@ -234,7 +278,6 @@ def resolve_hitl_task(resolution: HITLResolution):
         "status": "resolved_and_resumed",
         "resumed_state": resumed_state,
     }
-
 
 def _resume_graph(run_id: str, graph_name: Optional[str]) -> Dict[str, Any]:
     """Resume a graph run after HITL resolution. Dispatches to the correct
