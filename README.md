@@ -1,262 +1,126 @@
-# 🏗️ IronBridge Planning Agent — Task Decomposition & Planning Lab (Week 4)
+# IronBridge AI Operations Platform
 
-> **Agent:** Delay-Response Planning Agent
-> **Company:** IronBridge Construction
-> **Sits alongside:** The Memory & RAG Agent (`agent/agent.py`) — does not replace or duplicate it.
-> **New entry point:** `agent/planning_agent.py`
+&gt; **Company:** IronBridge Construction  
+&gt; **System:** Multi-Agent AI Platform with Persistent State, Human Oversight, and Live Operations Management
 
 ---
 
-## Problem Framing
+## Overview
 
-IronBridge is a construction company managing multiple projects involving materials, contractors, equipment, and deadlines. A major operational pain point is **selecting the optimal response when a delay hits**.
+IronBridge Construction operates across multiple active job sites, each with its own materials pipeline, contractor schedules, equipment fleet, and safety profile. Coordinating these moving parts in real time is not a task that can be solved with a single prompt or a linear script. A delay on one site ripples into procurement decisions on another. A safety incident triggers a chain of notifications, inspections, and work stoppages that may span days. A change order from a client must be priced, approved, and executed without breaking the budget of the original project.
 
-A project may face delays from:
-- Material shortages (e.g., rebar delivery late)
-- Contractor availability
-- Equipment breakdowns
-- Budget constraints
-- Weather conditions
+This repository houses the complete AI operations platform built for IronBridge. It is not a collection of disconnected demos. It is a single, integrated system where every agent shares the same MCP server, the same procurement database, the same document store, and the same operational platform that real users and administrators interact with every day.
 
-**Why a single tool call is not enough:**
-When a site engineer reports "Project 1 is behind schedule," the assistant cannot know whether the cause is a material shortage, equipment failure, or budget overrun until it **queries the database**. A single lookup returns raw data; deciding which mitigation strategy fits the **remaining budget**, **available stock**, and **equipment status** requires a multi-step plan with branching.
+The system is organized into four layers:
 
-**Why a wrong plan costs something:**
-Recommending a rush order when the remaining budget is $42,000 and the rush premium is $999,999 wastes procurement time, damages supplier trust, and extends the delay. The planning agent must **validate every proposal against live DB constraints** before shipping it — this is exactly what the grounded LATS environment does (see Case T03 below).
+| Layer | Purpose | Key Components |
+|:---|:---|:---|
+| **Platform** (`ib_platform/`) | Where people meet the agents | Admin dashboard, user chat interface, HITL inbox, ticket board |
+| **State Graphs** (`state_graph/`) | Agents that hold state across time | Change-order negotiation, equipment recovery, safety-incident response |
+| **Planning & Memory** (`planning/`, `agent/`, `memory/`, `rag/`) | Agents that reason and remember | Delay-response planning, policy Q&A, document retrieval |
+| **Infrastructure** (`mcp_server/`, `db/`) | Shared tools and data | Runtime tool registry, SQLite database, RAG vector store |
 
-**Why decomposition-first vs. dynamic matters:**
-- **Decomposition-first** generates the full DAG upfront (`diagnose → rank_options → propose_plan → notify`). It is cheap and predictable when the problem shape is already known.
-- **Dynamic decomposition** decides the next step only after observing the previous result. When diagnosis reveals a mid-plan surprise (e.g., low stock the static plan didn't anticipate), a fixed plan keeps executing the stale route; dynamic decomposition reacts.
+---
 
-**Why search (ToT / LATS) matters:**
-The `rank_options` sub-task genuinely benefits from comparing multiple strategies before committing. The `propose_plan` sub-task must survive a real budget check — a wrong proposal is expensive to unwind by phone. Plan-and-Solve is reserved for simple, low-stakes synthesis (e.g., the final notification).
+## The Three Stateful Problems
+
+Construction work is inherently asynchronous. A machine breaks on Friday evening. A safety inspector's report arrives Monday morning. A client's change-order request sits in email for three days. Each of these scenarios requires an agent that can start work, pause, wait for something outside its control, and resume exactly where it left off — without losing context, without re-executing completed steps, and without making irreversible decisions without human approval.
+
+### 1. Change-Order Negotiation Agent
+
+**The problem:** A client requests a scope change — an extra floor, a materials upgrade, a timeline shift. The project manager must price the change, check it against the remaining budget, obtain client approval, and then re-sequence the remaining work. This process can stretch across multiple days and multiple rounds of back-and-forth.
+
+**Why it needs a state graph:** The agent cannot price the change until it queries current stock and contractor availability. It cannot execute the change until a human approves the cost. It cannot re-sequence the schedule until the client confirms. Each of these is a genuine wait or a genuine branch.
+
+**Techniques used:**
+- **Task Decomposition** — The agent breaks the change-order response into a sequence of verifiable sub-tasks: impact assessment, cost estimation, approval gating, and schedule resequencing.
+- **Constrained ReAct** — When the agent proposes a revised schedule, it operates within a whitelist of permissible actions and validates every proposal against live database constraints (budget, stock, contractor status).
+
+### 2. Equipment Recovery Agent
+
+**The problem:** A critical piece of equipment fails on site. The site engineer needs a replacement fast, but the optimal path depends on whether a rental is available nearby, whether the budget can absorb the cost, and whether a repair might be faster. If the rental exceeds a threshold, a project manager must sign off.
+
+**Why it needs a state graph:** The agent must diagnose the failure, search for alternatives, price them, and then stop for human approval before committing spend. If a rental vendor's API is down, the run must fail cleanly, open a ticket, and resume once the vendor is reachable again — not start over from diagnosis.
+
+**Techniques used:**
+- **Tree of Thoughts** — The agent explores multiple recovery strategies (rental, repair, subcontract, schedule shift) in parallel, scoring each against time-to-recovery and cost before committing.
+- **Constrained ReAct** — The execution node that books a rental or calls a repair service is constrained by a whitelist and a budget ceiling. Any action that would exceed the threshold triggers a human-in-the-loop pause.
+
+### 3. Safety Incident Response Agent
+
+**The problem:** A safety incident is reported on site. The agent must triage severity, notify the relevant parties, schedule an inspection, and recommend corrective actions. Some actions — like ordering an immediate work stoppage or evacuating a section — have real operational cost and must not be taken autonomously.
+
+**Why it needs a state graph:** Severity classification may need to wait for a photo upload or a witness statement. The inspection may be scheduled for the next business day. A work-stoppage order must be approved by the safety officer. The agent must hold its state across these gaps.
+
+**Techniques used:**
+- **LATS (Language Agent Tree Search)** — The agent searches over candidate response orderings, scoring each path against a real severity rubric and regulatory checklist rather than its own intuition.
+- **Constrained ReAct** — Only whitelisted low-severity actions (notifications, documentation) execute automatically. Any action that would stop work or evacuate triggers a human-in-the-loop pause routed to the safety officer through the platform.
+
+---
+
+## Shared Infrastructure
+
+### MCP Server
+
+The `mcp_server/` directory contains the Model Context Protocol server that exposes IronBridge's operational data as tools. Every agent — whether stateful or single-pass — calls the same server. The server supports runtime registration and de-registration of tools, managed through the admin dashboard. A tool added from the platform is live for the next agent call; a tool removed is immediately unavailable.
+
+Key tool categories:
+- **Project & Budget:** `get_project`, `update_project_budget`, `list_projects`
+- **Materials & Suppliers:** `get_material_stock`, `get_supplier_status`, `list_materials`
+- **Contractors:** `get_contractor`, `list_contractors`
+- **Equipment:** `get_equipment`, `update_equipment_status`, `list_equipment`
+- **Safety & Compliance:** `log_safety_incident`, `get_safety_policy`
+
+### Database
+
+All agents read from and write to `db/procurement.db`, a single SQLite database. The schema covers projects, materials, suppliers, contractors, equipment, safety incidents, and — for the state-graph layer — runs, checkpoints, HITL tasks, and tickets. There is no parallel database for the new work; everything extends the existing schema.
+
+### RAG Document Store
+
+The Memory & RAG agent maintains a vector store of construction policies, safety manuals, and material specifications. Administrators add and remove documents through the platform's admin panel, and the retrieval agent's answers reflect the current corpus on its next query.
+
+---
+
+## Platform
+
+The `ib_platform/` directory contains the full-stack web application that serves as the product surface for the entire system.
+
+### For Administrators
+
+The admin panel (`ib_platform/frontend/admin/`) provides:
+- **Agent Registry:** View every agent connected to the MCP server. Add or remove tools from each agent's available toolkit. Changes propagate to the live server immediately.
+- **Document Management:** Upload new documents to the RAG corpus or remove outdated ones. The retrieval agent sees the updated corpus on its next query.
+- **HITL Inbox:** Review pending human-in-the-loop tasks opened by any state-graph agent. Inspect the full persisted state at the point of pause. Approve or reject with a comment, and watch the underlying run resume.
+- **Ticket Board:** Review open failure tickets from any state-graph run. See the checkpointed state at the moment of failure, the exception that caused it, and the node where it occurred. Resolve the ticket after fixing the root cause, and the run resumes from the same checkpoint.
+
+### For End Users
+
+The user chat interface (`ib_platform/frontend/user/`) provides:
+- **Agent Switching:** A sidebar or tab interface lets the user choose which agent to speak with — the Memory & RAG agent for policy questions, the Planning Agent for delay-response scenarios, or any of the three state-graph agents for long-running operational workflows.
+- **Persistent Threads:** Conversations with state-graph agents survive page refreshes, browser closures, and even server restarts. The user can close their laptop, reopen it the next morning, and pick up the same conversation exactly where it left off.
+
+---
+
+## State Graph Architecture
+
+### Checkpointing
+
+Every state graph writes its full state to durable storage after every meaningful transition. This is not a log file written after the fact; it is a first-class checkpoint that makes crash recovery possible. If the process is killed mid-run — demonstrated in `state_graph/demo_crash_resume.py` — the run resumes from its last checkpoint with no re-execution of completed steps and no loss of collected state.
+
+The checkpoint store lives in `state_graph/core/checkpoint_store.py`. It persists to the same SQLite database the rest of the system uses.
+
+### Human-in-the-Loop
+
+An explicit `HITL` node type is implemented in `state_graph/core/hitl.py`. When a node encounters a condition that requires human judgment — a cost above a threshold, an action that contradicts policy, a confidence score below a bar — the graph pauses, persists its full state, and opens a task on the platform. The graph resumes only after an administrator acts through the platform's UI, and the resumed run picks up the administrator's decision as part of its state.
+
+HITL pauses are expected. They are part of the normal flow. They are distinct from failures.
+
+### Tickets and Failure Recovery
+
+When a node fails unexpectedly — a tool call errors, a schema validation fails, the model returns something the graph cannot act on — the runner catches the exception, checkpoints the state at the moment of failure, and opens a ticket with status `open`. The ticket is inspectable on the platform, and once the underlying issue is resolved, the ticket is marked resolved and the run resumes from the same checkpoint — not restarted from the beginning.
+
+Tickets and HITL tasks follow different code paths, have different database tables, and surface in different sections of the admin panel.
 
 ---
 
 ## Repository Map
-
-```
-planning/
-├── algorithms/
-│   ├── decomposition.py           # DAG generation + IronBridge executors (DB calls)
-│   ├── dynamic_decomposition.py   # Interleaved planning + execution
-│   ├── plan_and_solve.py          # PS for simple synthesis
-│   ├── tree_of_thoughts.py        # ToT for ranking/options
-│   ├── lats.py                    # LATS for propose_plan (grounded env)
-│   ├── self_refine.py             # One-draft critique + revision
-│   ├── reflexion.py                # Multi-trial with episodic memory
-│   ├── environment.py             # IronBridgeEnvironment (real DB checks) + ungrounded baseline
-│   └── router.py                  # Routes sub-tasks to the right algorithm
-├── models.py                      # Plan, Task, Thought, EnvironmentFeedback (DAG + cycle checks)
-├── cli.py                         # CLI entry point for all modes
-└── model_provider.py              # Groq / deterministic fallback LLM
-
-planning_eval/
-├── decomposition_eval.py          # Decomposition-first vs. dynamic benchmark
-├── full_comparison.py             # Unified benchmark — ALL required methods, ALL cases
-├── lats_grounded_eval.py          # LATS grounded-vs-ungrounded focused benchmark
-└── self_correction_eval.py        # Self-Refine / Reflexion benchmark
-
-agent/
-├── agent.py                       # Memory & RAG agent (Week 3) — untouched
-└── planning_agent.py              # This week's agent: RAG + MCP tools + Planning, routed together
-
-tests/
-├── test_decomposition.py          # Acyclicity, divergence, IronBridge-specific decomposition tests
-├── test_eval.py                   # Algorithm unit tests + grounded-environment tests
-└── test_router.py                 # Live smoke test of the routing layer (see Demo Evidence #2)
-
-artifacts/
-└── full_comparison_table.json     # Trace backing the Master Comparison Table below
-```
-
----
-
-## Master Comparison Table (Evaluation Results)
-
-Executed via `python -m planning_eval.full_comparison` against the **same fixed 10-case test suite** (`T01`–`T10`, defined in `planning_eval/full_comparison.py`) for every method, so all numbers below are directly comparable.
-
-| Method | Success Rate | Acc % | Avg Score | Avg Calls | Latency | Est. Cost |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Decomposition-first (Static) | 2/10 | 20.0% | 0.25 | 2.0 | 1.47s | $0.11 |
-| Dynamic Decomposition | 5/10 | 30.0% | 0.22 | 5.2 | 8.96s | $0.18 |
-| Tree-of-Thoughts (ToT) | 4/10 | 40.0% | 0.20 | 4.2 | 6.55s | $0.07 |
-| LATS (Grounded) | 4/10 | 40.0% | 0.24 | 3.4 | 3.68s | $0.02 |
-| LATS (Ungrounded) | 4/10 | 40.0% | 0.20 | 3.8 | 4.12s | $0.03 |
-| Reflexion (Ungrounded) | 4/10 | 40.0% | 0.37 | 1.4 | 3.14s | $0.02 |
-
-**What the numbers say so far:**
-- **Dynamic beats Static** on success rate (5/10 vs 2/10) at roughly double the cost and 6× the latency — the adaptive replanning pays for itself when the initial diagnosis turns up a surprise (see Case T01 below).
-- **LATS (Grounded) and LATS (Ungrounded) post the same success count** (4/10) with only a modest score gap (0.24 vs 0.20) in the aggregate. The aggregate numbers alone are a weak argument for grounding — the real evidence is the per-case walkthrough in Case T03, where grounding catches a specific budget violation ungrounded scoring misses entirely.
-- **Reflexion (Ungrounded) posts the highest average score of any method (0.37)** despite being self-graded by the same model that produced the attempt. This is worth flagging rather than treating as a win — see Known Limitations.
-
----
-
-## Key Planning Concerns
-
-### 1. Task Decomposition: Static vs. Dynamic
-
-Both methods run against the same real request type (`decompose_goal` / `dynamic_decomposition` in `planning/algorithms/`), with acyclicity enforced at `Plan` construction time via `networkx` + a Pydantic `model_validator` (`planning/models.py`) — a cyclic plan is rejected before it can ever execute, not caught mid-run.
-
-**Divergence — Case T01 (Mitigate Delay):** the dynamic planner pivoted its strategy mid-execution after observing low stock levels that the static plan's pre-committed route didn't account for, reaching a **0.90** score. The static plan, having committed to its full DAG before any real diagnosis existed, scored **0.34** on the same request.
-
-### 2. Planning Algorithms (Plan-and-Solve, ToT, LATS)
-
-- **Plan-and-Solve** — simple synthesis (e.g., Case T04's capacity estimate, and the `notify` sub-task).
-- **Tree-of-Thoughts** — generates and self-evaluates multiple mitigation-strategy branches before committing; used for `rank_options`.
-- **LATS** — our most robust method for high-stakes proposals. MCTS-guided search (UCT selection, backpropagation, verbal reflection on failed branches) scored by real external DB feedback rather than the model's own opinion; used for `propose_plan`.
-
-### 3. Grounded vs. Ungrounded Critique
-
-We replaced the toolkit's randomized evaluator (`algorithms/environment.py::Environment`, `random.betavariate`) with a real `IronBridgeEnvironment` that checks proposals against `mcp_server/db.py`: remaining budget, supplier `ContractStatus`, and material stock levels.
-
-**The failure (ungrounded):** in Case T03 (Rush Order), the ungrounded evaluator approved a **$999,999** rush order despite the project having only **$42,000** remaining.
-
-**The correction (grounded):** `IronBridgeEnvironment` caught the budget overrun (score **0.0**) and forced the agent to fall back to a "Schedule Resequence" strategy that required no extra budget.
-
-### 4. Self-Correction (Self-Refine & Reflexion)
-
-- **Self-Refine** — one draft, one grounded critique (deterministic checks + `IronBridgeEnvironment`), one revision. Used to polish cheap-to-redo outputs like proposal drafts and notifications.
-- **Reflexion** — full-task retry across trials with a capped episodic buffer. In **Case T04** (Capacity Estimation), the agent reached a **1.00** score by carrying forward reflections that corrected an initial mathematical error across three trials.
-
----
-
-## System Integration
-
-The Planning Agent is wired into `agent/planning_agent.py`, alongside — not instead of — the RAG/memory system:
-
-- **Automatic routing:** requests containing keywords like `"delay"`, `"risk"`, `"shortage"`, `"resequence"`, `"rush order"` are routed to the Planning Agent (`_is_planning_request`); policy questions still go to RAG; everything else still goes through the normal MCP tool-calling loop.
-- **Sub-task routing:** `planning/router.py::execute_routed_plan` dispatches each DAG node to the algorithm that fits its shape (`diagnose` → direct, `rank_options` → ToT, `propose_plan` → LATS, `notify` → Plan-and-Solve).
-- **Robust fallback:** if the Planning Agent hits an API rate limit (429) or any other exception, the loop catches it and falls back to the standard tool-based agent so the user still gets an answer (see Known Limitations — this fallback fired often enough during evaluation to affect the numbers above).
-
----
-
-## Sub-Task Routing Recommendations
-
-| Sub-Task Shape | Recommended Method | Justification |
-|---|---|---|
-| Simple / deterministic | Plan-and-Solve | Lowest cost, fastest execution — no branching to explore. |
-| Ranking / options | Tree-of-Thoughts | Explores multiple strategies before committing; beats single-pass ranking. |
-| High-stakes / financial | LATS (Grounded) | Hard-validates proposals against real DB constraints before they ship — see Case T03. |
-| Multi-trial learning | Reflexion | Carries lessons across attempts; fixes recurring logic/calculation errors (Case T04). |
-
----
-
-## Demo Evidence
-
-### 1. Decomposition-first vs. Dynamic Divergence (Case T01)
-Dynamic decomposition pivoted after observing low stock mid-run and scored 0.90; the static plan committed to a stale route and scored 0.34 on the identical request.
-
-### 2. Sub-Task Routing — Live Smoke Test (`python -m tests.test_router`)
-
-```
-============================================================
-ROUTER SMOKE TEST
-============================================================
-[diagnose] Diagnose root cause for Project 1
-  Status: OK  | method=Plan-and-Solve
-  Output preview: **Project 1 Diagnosis: Test Delay Risk**
-  Based on the project data, the root cause of the test delay risk in Project 1 ...
-
-[rank_options] Rank mitigation strategies for Project 1
-  Status: OK  | method=Tree-of-Thoughts
-  Output preview: Develop a decision matrix to evaluate and rank mitigation strategies based on
-  their potential impact, feasibility, and c...
-
-[propose_plan] Propose final plan for Project 1
-  Status: OK  | method=LATS
-  Output preview: Solution 1: Implement a machine learning model to analyze data and predict
-  outcomes. The model will be trained on a data...
-
-[notify] Draft notification for site engineer
-  Status: OK  | method=Plan-and-Solve
-  Output preview: **Notification for Site Engineer: Delay in Material Delivery and Revised
-  Construction Schedule** **Problem Statement:** ...
-============================================================
-ALL TESTS PASSED ✅
-============================================================
-```
-
-### 3. Grounded Environment Catching a Failure (Case T03)
-A $999,999 rush order against a $42,000 remaining budget is accepted by the ungrounded evaluator but rejected (score 0.0) by `IronBridgeEnvironment`, forcing a switch to Schedule Resequence.
-
-### 4. Reflexion Cross-Trial Memory (Case T04)
-Episodic memory carried across three trials corrected a repeated math error in the capacity estimate, ending at a 1.00 score.
-
-### 5. Self-Refine Revision
-*(Pending — add one concrete before/after draft-and-revision transcript here; see Known Limitations.)*
-
----
-
-## How to Run
-
-```bash
-# 1. Install dependencies
-pip install -r mcp_server/requirements.txt
-pip install -r agent/requirements.txt
-pip install -r requirements.txt
-
-# 2. Configure environment (.env in repo root)
-GROQ_API_KEY=...
-GROQ_MODEL=llama-3.3-70b-versatile
-IRONBRIDGE_DB_PATH=./db/procurement.db
-IRONBRIDGE_DB_ENGINE=sqlite
-
-# 3. Run the full comparison benchmark
-python -m planning_eval.full_comparison
-
-# 4. Run the router smoke test
-python -m tests.test_router
-
-# 5. Run the interactive agent (planning + RAG + MCP tools, routed together)
-python -m agent.planning_agent
-# Try: "Project 1 is behind schedule. Propose a plan."
-```
-
----
-
-## Known Limitations (Before Final Submission)
-
-- **Comparison table is incomplete.** The rubric requires every method compared against the fixed suite; the table above is missing **Plan-and-Solve (baseline)**, **Self-Refine (Grounded)**, **Self-Refine (Ungrounded)**, and **Reflexion (Grounded)**. The code paths for all four exist and are exercised by `planning_eval/full_comparison.py` and `planning_eval/self_correction_eval.py` — this is a matter of completing the run, not writing new code.
-- **API rate limiting affected the run.** Several of the low success counts above include Groq 429 errors caught and scored as failures, not genuine plan-quality failures. This deflates every method's success rate and weakens the comparison as a signal of algorithm quality. Recommend re-running with longer inter-case delays (or a smaller/faster model) and, in the saved trace, distinguishing rate-limit failures from genuine grounded-environment rejections.
-- **Reflexion (Ungrounded) currently scores highest of all methods (0.37).** Since this number comes from the model grading its own output, it is exactly the kind of self-serving bias grounding exists to catch — without the missing Reflexion (Grounded) row, there's no evidence yet that grounding corrects this for Reflexion specifically (only demonstrated for LATS, via Case T03).
-- **The aggregate LATS grounded-vs-ungrounded gap is narrow** (0.24 vs 0.20, same success count). Lead the "why grounding matters" argument with the Case T03 walkthrough, not the aggregate averages alone.
-- **Self-Refine demo evidence is a placeholder.** Add one concrete draft → critique → revision transcript before submission.
-
----
-
-## Guardrails Met
-
-- [x] Decomposition-first and dynamic both implemented against the same real request type
-- [x] Acyclicity enforced at construction time
-- [x] Plan-and-Solve, Tree of Thoughts, and LATS all implemented and routed live (see `test_router.py`)
-- [x] Self-Refine and Reflexion both implemented, grounded and ungrounded variants
-- [x] Grounded environment replaces the toolkit's randomized default (budget/stock/supplier checks)
-- [x] Artifacts saved as JSON traces (`artifacts/full_comparison_table.json`)
-- [x] Live agent integration (`agent/planning_agent.py`) alongside the RAG/memory agent
-
----
-
-## Teamwork & Issues
-
-| # | Title | Status |
-|---|---|---|
-| 1 | Delay-risk mitigation plans need grounded search because single-pass proposals exceed budget or use inactive suppliers | Closed |
-| 2 | Delay-risk tickets need decomposition because no single MCP tool resolves them | Closed |
-| 3 | Swap the toolkit's model provider | Closed |
-| 4 | Router depends on Task 2: plan_and_solve, tree_of_thoughts, lats need IronBridge adaptation | Closed |
-| 5 | Swap base model to our used model | Closed (PR) |
-| 6 | Test the three planning algorithms | Closed (PR) |
-| 7 | Integrate planning algorithms into ironbridge-planning | Closed |
-| 8 | Self Connection + Grounded for LATS/connection | Closed |
-
-> Assign each issue to its actual owner on GitHub itself (currently unassigned) so individual contribution is traceable from the issue tracker, not just this table.
-
----
-
-## Credits
-
-Built on top of the reference toolkit:
-`github.com/AmrSheta22/task_decomposition_and_planning`
-
-Extends the existing IronBridge MCP server and database from Weeks 2–3 (MCP Server Lab + Memory & RAG Lab).
