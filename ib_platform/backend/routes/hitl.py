@@ -225,7 +225,6 @@ def resolve_hitl_task(resolution: HITLResolution):
         pass
 
     # Resume the graph
-        # Resume the graph
     resumed_state = _resume_graph(run_id, graph_name)
 
     # Write the outcome back into ChatMessages / ChatSessions so the
@@ -235,6 +234,7 @@ def resolve_hitl_task(resolution: HITLResolution):
     # pick up the admin's decision, not just proceed as if nothing
     # happened" from the USER's perspective too, not just the DB.
     final_status = default_store.load(run_id)
+    session_id = None
     if final_status:
         _, _, new_status = final_status
 
@@ -247,10 +247,14 @@ def resolve_hitl_task(resolution: HITLResolution):
                 session_id = session_row["SessionID"]
 
                 if new_status == "completed":
-                    msg = f"✅ Admin {resolution.decision} the request. " + (
-                        f"Result: {resumed_state.get('execution_result', 'Task completed.')}"
-                    )
-                    msg_type = "status_completed"
+                    if resolution.decision == "rejected":
+                        msg = "❌ Admin rejected the request. The change order was not approved."
+                        msg_type = "status_error"
+                    else:
+                        msg = f"✅ Admin {resolution.decision} the request. " + (
+                            f"Result: {resumed_state.get('execution_result', 'Task completed.')}"
+                        )
+                        msg_type = "status_completed"
                 elif new_status == "paused_hitl":
                     msg = "⏸️ Admin decision recorded, but a new approval is needed for the next proposal."
                     msg_type = "status_paused_hitl"
@@ -271,6 +275,18 @@ def resolve_hitl_task(resolution: HITLResolution):
                     (new_status, session_id),
                 )
 
+           ### SSE BROADCAST ###
+    if session_id is not None:
+        try:
+            from ib_platform.backend.routes.chat import broadcast_session_update_sync
+            broadcast_session_update_sync(session_id, {
+                "type": "hitl_resolved",
+                "status": new_status,
+                "message": msg,
+            })
+        except Exception:
+            pass  # SSE is best-effort; don't fail the resolve if broadcast fails
+    ### END SSE BROADCAST ###
     return {
         "task_id": resolution.task_id,
         "run_id": run_id,
@@ -278,7 +294,6 @@ def resolve_hitl_task(resolution: HITLResolution):
         "status": "resolved_and_resumed",
         "resumed_state": resumed_state,
     }
-
 def _resume_graph(run_id: str, graph_name: Optional[str]) -> Dict[str, Any]:
     """Resume a graph run after HITL resolution. Dispatches to the correct
     graph builder based on graph_name."""

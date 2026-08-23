@@ -1,7 +1,10 @@
 """
 Chat endpoints — user-facing surface.
 """
-
+import json
+import asyncio
+from typing import Set
+from sse_starlette.sse import EventSourceResponse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
@@ -15,7 +18,7 @@ from ib_platform.backend.services.agent_runner import (
 )
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
+_session_subscribers: Dict[int, Set[asyncio.Queue]] = {}
 AGENT_ID_MAP = {
     "equipment_recovery_agent": "equipment_recovery",
     "change_order_agent": "change_order",
@@ -23,7 +26,68 @@ AGENT_ID_MAP = {
     "memory_rag_agent": "memory_rag",
     "planning_agent": "planning",
 }
+def _subscribe_session(session_id: int) -> asyncio.Queue:
+    """Create a new SSE queue for a session."""
+    queue = asyncio.Queue()
+    if session_id not in _session_subscribers:
+        _session_subscribers[session_id] = set()
+    _session_subscribers[session_id].add(queue)
+    return queue
 
+def _unsubscribe_session(session_id: int, queue: asyncio.Queue):
+    """Remove an SSE queue when client disconnects."""
+    if session_id in _session_subscribers:
+        _session_subscribers[session_id].discard(queue)
+        if not _session_subscribers[session_id]:
+            del _session_subscribers[session_id]
+
+
+@router.get("/sessions/{session_id}/events")
+async def session_events(session_id: int):
+    """SSE endpoint: server pushes updates to the client in real-time."""
+    queue = _subscribe_session(session_id)
+
+    async def event_generator():
+        try:
+            while True:
+                data = await queue.get()
+                yield {"event": "update", "data": json.dumps(data)}
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _unsubscribe_session(session_id, queue)
+
+    return EventSourceResponse(event_generator())
+import threading
+
+def broadcast_session_update_sync(session_id: int, data: Dict[str, Any]):
+    """Fire-and-forget SSE broadcast from a sync context (e.g. FastAPI sync endpoint)."""
+    async def _broadcast():
+        if session_id not in _session_subscribers:
+            return
+        dead_queues = set()
+        for queue in _session_subscribers[session_id]:
+            try:
+                await queue.put(data)
+            except Exception:
+                dead_queues.add(queue)
+        for q in dead_queues:
+            _session_subscribers[session_id].discard(q)
+            if not _session_subscribers[session_id]:
+                del _session_subscribers[session_id]
+                break
+
+    def _run():
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_broadcast())
+            loop.close()
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+    
 REVERSE_AGENT_ID_MAP = {v: k for k, v in AGENT_ID_MAP.items()}
 
 def _to_internal_name(agent_id: str) -> str:
@@ -180,19 +244,19 @@ def send_message(session_id: int, req: SendMessageRequest):
             "SELECT AgentName, Status, RunID FROM ChatSessions WHERE SessionID = ?",
             (session_id,),
         ).fetchone()
-        
+
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        
+
         agent_name = session["AgentName"]
         current_status = session["Status"]
         run_id = session["RunID"]
-        
+
         conn.execute(
             "INSERT INTO ChatMessages (SessionID, Sender, Content) VALUES (?, ?, ?)",
             (session_id, "user", req.content),
         )
-        
+
         if is_state_graph_agent(agent_name):
             if current_status in ("paused_hitl", "ticket_open"):
                 reply = (
@@ -205,16 +269,23 @@ def send_message(session_id: int, req: SendMessageRequest):
                 )
                 conn.commit()
                 return {"session_id": session_id, "status": current_status, "reply": reply}
-            
+
             elif current_status == "completed":
-                reply = "✅ This task has already been completed. Please start a new session if you have another request."
+                from state_graph.core.checkpoint_store import default_store
+                checkpoint = default_store.load(run_id)
+                if checkpoint:
+                    state, _, _ = checkpoint
+                    execution_result = state.get("execution_result", "Task completed.")
+                    reply = f"✅ Task completed. Result: {execution_result}"
+                else:
+                    reply = "✅ This task has already been completed. Please start a new session if you have another request."
                 conn.execute(
                     "INSERT INTO ChatMessages (SessionID, Sender, Content, MessageType) VALUES (?, ?, ?, ?)",
                     (session_id, "agent", reply, "status_completed"),
                 )
                 conn.commit()
                 return {"session_id": session_id, "status": "completed", "reply": reply}
-            
+
             else:
                 reply = "🔄 The agent is still processing. Please wait."
                 conn.execute(
@@ -223,6 +294,7 @@ def send_message(session_id: int, req: SendMessageRequest):
                 )
                 conn.commit()
                 return {"session_id": session_id, "status": current_status, "reply": reply}
+
         else:
             status, response = run_legacy_agent(agent_name, req.content)
             msg_type = "status_completed" if status == "completed" else "status_error"
@@ -236,7 +308,6 @@ def send_message(session_id: int, req: SendMessageRequest):
             )
             conn.commit()
             return {"session_id": session_id, "status": status, "reply": response}
-
 @router.get("/sessions/{session_id}/messages", response_model=List[MessageOut])
 def get_messages(session_id: int):
     with get_conn() as conn:

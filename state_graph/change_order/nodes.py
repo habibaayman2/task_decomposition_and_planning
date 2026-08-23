@@ -138,17 +138,27 @@ def decompose_change_order_node(state: Dict[str, Any]) -> Dict[str, Any]:
     raw_request = state.get("request")
     if not raw_request:
         raise TicketableError(
-            "Missing \'request\' payload in state.",
+            "Missing 'request' payload in state.",
             context={"state_keys": list(state.keys())},
         )
 
     # ------------------------------------------------------------------
-    # Structured path (backward compat) or LLM decomposition path
+    # Fields already sitting directly on `state` (e.g. an admin's
+    # ticket-resolution correction, applied via updated_state) take
+    # priority -- no need to re-run the LLM decomposition if a human
+    # already supplied everything explicitly.
     # ------------------------------------------------------------------
-    if isinstance(raw_request, dict) and all(k in raw_request for k in _REQUIRED_REQUEST_FIELDS):
+    existing = {k: state[k] for k in _REQUIRED_REQUEST_FIELDS if state.get(k) is not None}
+
+    if all(k in existing for k in _REQUIRED_REQUEST_FIELDS):
+        structured = existing
+    elif isinstance(raw_request, dict) and all(k in raw_request for k in _REQUIRED_REQUEST_FIELDS):
         structured = raw_request
     else:
-        structured = _llm_decompose_with_retry(raw_request, max_retries=2)
+        decomposed = _llm_decompose_with_retry(raw_request, max_retries=2)
+        # Any field an admin already fixed directly on state overrides
+        # the LLM's fresh guess from the same raw text.
+        structured = {**decomposed, **existing}
 
     # ------------------------------------------------------------------
     # Grounded validation against live DB

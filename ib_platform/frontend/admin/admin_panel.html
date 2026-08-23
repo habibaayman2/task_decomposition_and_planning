@@ -1,103 +1,374 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>IronBridge — Admin Platform</title>
   <style>
     :root {
-      --bg: #0f172a; --panel: #1e293b; --text: #e2e8f0; --muted: #94a3b8;
-      --accent: #38bdf8; --success: #4ade80; --warning: #facc15; --danger: #f87171;
-      --border: #334155; --nav-height: 48px;
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --success: #4ade80;
+      --warning: #facc15;
+      --danger: #f87171;
+      --border: #334155;
+      --nav-height: 48px;
     }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: var(--bg); color: var(--text); }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
 
     #topnav {
-      height: var(--nav-height); background: #020617; border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 0 1.25rem; position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: var(--nav-height);
+      background: #020617;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.25rem;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
     }
-    #topnav .brand { font-weight: 700; font-size: 1rem; color: var(--accent);
-      display: flex; align-items: center; gap: 0.5rem; }
-    #topnav .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
-    #topnav .brand .dot.offline { background: var(--danger); }
-    #topnav .brand .dot.warn { background: var(--warning); }
-    #topnav .links { display: flex; gap: 0.25rem; }
-    #topnav .links a {
-      padding: 0.4rem 0.8rem; border-radius: 0.35rem; border: 1px solid transparent;
-      background: transparent; color: var(--muted); text-decoration: none; font-size: 0.85rem;
-    }
-    #topnav .links a:hover { color: var(--text); background: rgba(56,189,248,0.08); }
-    #topnav .links a.active { color: var(--accent); border-color: var(--border); background: var(--panel); }
-    #topnav .right { display: flex; align-items: center; gap: 0.6rem; }
-    #topnav .api-input {
-      background: var(--panel); color: var(--text); border: 1px solid var(--border);
-      padding: 0.3rem 0.5rem; border-radius: 0.3rem; font-size: 0.8rem; width: 170px;
-    }
-    #topnav .health { font-size: 0.75rem; color: var(--muted); }
 
-    #layout { display: flex; padding-top: var(--nav-height); min-height: 100vh; }
-    nav { width: 210px; background: var(--panel); border-right: 1px solid var(--border); padding: 1rem 0; }
+    #topnav .brand {
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    #topnav .brand .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    #topnav .brand .dot.offline {
+      background: var(--danger);
+    }
+
+    #topnav .brand .dot.warn {
+      background: var(--warning);
+    }
+
+    #topnav .links {
+      display: flex;
+      gap: 0.25rem;
+    }
+
+    #topnav .links a {
+      padding: 0.4rem 0.8rem;
+      border-radius: 0.35rem;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+    }
+
+    #topnav .links a:hover {
+      color: var(--text);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    #topnav .links a.active {
+      color: var(--accent);
+      border-color: var(--border);
+      background: var(--panel);
+    }
+
+    #topnav .right {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    #topnav .api-input {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.5rem;
+      border-radius: 0.3rem;
+      font-size: 0.8rem;
+      width: 170px;
+    }
+
+    #topnav .health {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    #layout {
+      display: flex;
+      padding-top: var(--nav-height);
+      min-height: 100vh;
+    }
+
+    nav {
+      width: 210px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 1rem 0;
+    }
+
     nav button {
-      width: 100%; text-align: left; padding: 0.7rem 1rem;
-      background: transparent; border: none; color: var(--text);
-      cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem;
+      width: 100%;
+      text-align: left;
+      padding: 0.7rem 1rem;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
-    nav button:hover, nav button.active { background: rgba(56,189,248,0.08); color: var(--accent); }
-    main { flex: 1; padding: 1.25rem; overflow-y: auto; }
-    .section { display: none; }
-    .section.active { display: block; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; }
-    .card h3 { margin: 0 0 0.5rem; font-size: 1rem; color: var(--accent); }
+
+    nav button:hover,
+    nav button.active {
+      background: rgba(56, 189, 248, 0.08);
+      color: var(--accent);
+    }
+
+    main {
+      flex: 1;
+      padding: 1.25rem;
+      overflow-y: auto;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+    }
+
+    .card h3 {
+      margin: 0 0 0.5rem;
+      font-size: 1rem;
+      color: var(--accent);
+    }
+
     .badge {
-      display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem;
-      background: var(--border); color: var(--muted);
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: var(--border);
+      color: var(--muted);
     }
-    .badge.running { background: rgba(74,222,128,0.15); color: var(--success); }
-    .badge.paused_hitl { background: rgba(250,204,21,0.15); color: var(--warning); }
-    .badge.ticket_open { background: rgba(248,113,113,0.15); color: var(--danger); }
-    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
-    th, td { padding: 0.6rem 0.5rem; text-align: left; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 600; }
+
+    .badge.running {
+      background: rgba(74, 222, 128, 0.15);
+      color: var(--success);
+    }
+
+    .badge.paused_hitl {
+      background: rgba(250, 204, 21, 0.15);
+      color: var(--warning);
+    }
+
+    .badge.ticket_open {
+      background: rgba(248, 113, 113, 0.15);
+      color: var(--danger);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    th,
+    td {
+      padding: 0.6rem 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
     button.action {
-      padding: 0.35rem 0.7rem; border-radius: 0.35rem; border: 1px solid var(--border);
-      background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.85rem;
+      padding: 0.35rem 0.7rem;
+      border-radius: 0.35rem;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.85rem;
     }
-    button.action:hover { border-color: var(--accent); color: var(--accent); }
-    button.primary { background: var(--accent); color: #0f172a; border-color: var(--accent); font-weight: 600; }
-    button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-    input, textarea, select {
-      background: var(--bg); color: var(--text); border: 1px solid var(--border);
-      padding: 0.5rem; border-radius: 0.35rem; width: 100%; font-family: inherit; font-size: 0.9rem;
+
+    button.action:hover {
+      border-color: var(--accent);
+      color: var(--accent);
     }
-    .row { display: flex; gap: 0.75rem; align-items: flex-end; margin-top: 0.5rem; flex-wrap: wrap; }
-    .row > * { flex: 1 1 180px; }
+
+    button.primary {
+      background: var(--accent);
+      color: #0f172a;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    button.danger {
+      background: var(--danger);
+      color: #fff;
+      border-color: var(--danger);
+    }
+
+    input,
+    textarea,
+    select {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.5rem;
+      border-radius: 0.35rem;
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    .row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-end;
+      margin-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .row>* {
+      flex: 1 1 180px;
+    }
+
     .toast {
-      position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1rem; border-radius: 0.4rem;
-      background: var(--panel); border: 1px solid var(--border); color: var(--text);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.3); z-index: 100; max-width: 420px;
+      position: fixed;
+      bottom: 1rem;
+      right: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 0.4rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      z-index: 100;
+      max-width: 420px;
     }
-    .toast.success { border-color: var(--success); }
-    .toast.error { border-color: var(--danger); }
+
+    .toast.success {
+      border-color: var(--success);
+    }
+
+    .toast.error {
+      border-color: var(--danger);
+    }
+
     pre.code {
-      background: #020617; padding: 0.6rem; border-radius: 0.35rem; overflow-x: auto;
-      font-size: 0.8rem; color: #cbd5e1; border: 1px solid var(--border);
+      background: #020617;
+      padding: 0.6rem;
+      border-radius: 0.35rem;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      border: 1px solid var(--border);
     }
-    .empty { color: var(--muted); padding: 1rem 0; }
-    .tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
-    .tab { padding: 0.4rem 0.8rem; border-radius: 0.35rem; cursor: pointer;
-      border: 1px solid var(--border); background: var(--bg); font-size: 0.85rem; }
-    .tab.active { background: var(--accent); color: #0f172a; border-color: var(--accent); font-weight: 600; }
-    .stat-row { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .stat-box { background: var(--panel); border: 1px solid var(--border); border-radius: 0.5rem;
-      padding: 1rem; min-width: 140px; text-align: center; }
-    .stat-box .num { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
-    .stat-box .label { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+
+    .empty {
+      color: var(--muted);
+      padding: 1rem 0;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .tab {
+      padding: 0.4rem 0.8rem;
+      border-radius: 0.35rem;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      font-size: 0.85rem;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: #0f172a;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    .stat-row {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .stat-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      min-width: 140px;
+      text-align: center;
+    }
+
+    .stat-box .num {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .stat-box .label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
   </style>
 </head>
+
 <body>
   <div id="topnav">
     <div style="display:flex;align-items:center;gap:1rem;">
@@ -145,7 +416,12 @@
             <button class="action primary" onclick="listTools()">List Tools</button>
           </div>
           <table>
-            <thead><tr><th>Tool</th><th>Actions</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
             <tbody id="toolsBody"></tbody>
           </table>
         </div>
@@ -222,136 +498,140 @@
 
   <div id="toastContainer"></div>
 
-<script src="../shared_config.js"></script>
-<script>
-  const API = () => {
-    const el = document.getElementById('apiBase');
-    const val = el.value.replace(/\/$/, '');
-    if (window.IBConfig) IBConfig.setApiBase(val);
-    return val;
-  };
-  const auth = () => ({ employee_id: parseInt(document.getElementById('employeeId').value)||1, pin: document.getElementById('pin').value||'0000' });
+  <script src="../shared_config.js"></script>
+  <script>
+    const API = () => {
+      const el = document.getElementById('apiBase');
+      let val = el ? el.value.replace(/\/$/, '') : '';
 
-  function toast(msg, type='success') {
-    const el = document.createElement('div');
-    el.className = `toast ${type}`;
-    el.textContent = msg;
-    document.getElementById('toastContainer').appendChild(el);
-    setTimeout(() => el.remove(), 4000);
-  }
+      if (!val || val.includes('localhost')) {
+        val = window.location.origin;
+      }
+      if (window.IBConfig) IBConfig.setApiBase(val);
+      return val;
+    };
+    const auth = () => ({ employee_id: parseInt(document.getElementById('employeeId').value) || 1, pin: document.getElementById('pin').value || '0000' });
 
-  async function post(path, body) {
-    const res = await fetch(`${API()}${path}`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({...auth(), ...body})
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `${res.status} error`);
-    return data;
-  }
+    function toast(msg, type = 'success') {
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      el.textContent = msg;
+      document.getElementById('toastContainer').appendChild(el);
+      setTimeout(() => el.remove(), 4000);
+    }
 
-  async function get(path) {
-    const res = await fetch(`${API()}${path}`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `${res.status} error`);
-    return data;
-  }
+    async function post(path, body) {
+      const res = await fetch(`${API()}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...auth(), ...body })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `${res.status} error`);
+      return data;
+    }
 
-  async function checkHealth() {
-    const dot = document.getElementById('healthDot');
-    const txt = document.getElementById('healthText');
-    try {
-      const d = await (await fetch(API() + "/health")).json();
-      if (d.status === "ok") {
-        dot.className = "dot";
-        txt.textContent = d.a4_loaded ? "Backend OK" : "Backend OK (fallback)";
-      } else { dot.className = "dot offline"; txt.textContent = "Backend error"; }
-    } catch { dot.className = "dot offline"; txt.textContent = "Backend offline"; }
-  }
+    async function get(path) {
+      const res = await fetch(`${API()}${path}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `${res.status} error`);
+      return data;
+    }
 
-  (function init() {
-    if (window.IBConfig) document.getElementById('apiBase').value = IBConfig.getApiBase();
-    checkHealth(); setInterval(checkHealth, 5000); loadAgents();
-  })();
+    async function checkHealth() {
+      const dot = document.getElementById('healthDot');
+      const txt = document.getElementById('healthText');
+      try {
+        const d = await (await fetch(API() + "/health")).json();
+        if (d.status === "ok") {
+          dot.className = "dot";
+          txt.textContent = d.a4_loaded ? "Backend OK" : "Backend OK (fallback)";
+        } else { dot.className = "dot offline"; txt.textContent = "Backend error"; }
+      } catch { dot.className = "dot offline"; txt.textContent = "Backend offline"; }
+    }
 
-  function showSection(id) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
-    document.querySelector(`nav button[data-section="${id}"]`).classList.add('active');
-    if (id === 'agents') loadAgents();
-    if (id === 'hitl') loadHitl('all');
-    if (id === 'tickets') { loadTicketStats(); loadTickets('open'); }
-    if (id === 'rag') { ragStats(); listRag(); }
-    if (id === 'tools') listTools();
-  }
+    (function init() {
+      if (window.IBConfig) document.getElementById('apiBase').value = IBConfig.getApiBase();
+      checkHealth(); setInterval(checkHealth, 5000); loadAgents();
+    })();
 
-  async function loadAgents() {
-    try {
-      const data = await get('/api/agents');
-      const grid = document.getElementById('agentsGrid');
-      grid.innerHTML = (data.agents || []).map(a => `
+    function showSection(id) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      document.querySelector(`nav button[data-section="${id}"]`).classList.add('active');
+      if (id === 'agents') loadAgents();
+      if (id === 'hitl') loadHitl('all');
+      if (id === 'tickets') { loadTicketStats(); loadTickets('open'); }
+      if (id === 'rag') { ragStats(); listRag(); }
+      if (id === 'tools') listTools();
+    }
+
+    async function loadAgents() {
+      try {
+        const data = await get('/api/agents');
+        const grid = document.getElementById('agentsGrid');
+        grid.innerHTML = (data.agents || []).map(a => `
         <div class="card">
-          <h3>${a.label} <span class="badge ${a.health?.state||'idle'}">${a.health?.state||'idle'}</span></h3>
+          <h3>${a.label} <span class="badge ${a.health?.state || 'idle'}">${a.health?.state || 'idle'}</span></h3>
           <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.5rem;">${a.agent_id}</div>
-          <div style="font-size:0.9rem;">${a.description||''}</div>
+          <div style="font-size:0.9rem;">${a.description || ''}</div>
           ${a.health?.active_runs ? `<div style="margin-top:0.5rem;font-size:0.85rem;">Active runs: ${a.health.active_runs}</div>` : ''}
           <div style="margin-top:0.5rem;font-size:0.8rem;color:var(--muted);">Entry: ${a.entrypoint}</div>
         </div>
       `).join('');
-    } catch (e) { toast(e.message, 'error'); }
-  }
+      } catch (e) { toast(e.message, 'error'); }
+    }
 
-  async function listTools() {
-    try {
-      const agentId = document.getElementById('toolAgentId').value || null;
-      const data = await post('/api/tools/list', agentId ? {agent_id: agentId} : {});
-      const body = document.getElementById('toolsBody');
-      body.innerHTML = (data.tools || []).map(t => `<tr><td>${t}</td><td><button class="action danger" onclick="deregisterTool('${t}')">Deregister</button></td></tr>`).join('');
-      if (!data.tools?.length) body.innerHTML = '<tr><td colspan="2" class="empty">No tools found</td></tr>';
-    } catch (e) { toast(e.message, 'error'); }
-  }
-  async function deregisterTool(name) {
-    if (!name) name = document.getElementById('deregTool').value;
-    if (!name) return;
-    try { await post('/api/tools/deregister', {tool_name: name}); toast(`Deregistered ${name}`); listTools(); }
-    catch (e) { toast(e.message, 'error'); }
-  }
-  async function registerTool() {
-    const name = document.getElementById('regTool').value;
-    if (!name) return;
-    try { await post('/api/tools/register', {tool_name: name}); toast(`Registered ${name}`); listTools(); }
-    catch (e) { toast(e.message, 'error'); }
-  }
-  async function setScope() {
-    const agent = document.getElementById('scopeAgent').value;
-    const tools = document.getElementById('scopeTools').value.split(',').map(s=>s.trim()).filter(Boolean);
-    if (!agent) return;
-    try { await post('/api/tools/scope', {agent_id: agent, tool_names: tools}); toast(`Scope set for ${agent}`); }
-    catch (e) { toast(e.message, 'error'); }
-  }
+    async function listTools() {
+      try {
+        const agentId = document.getElementById('toolAgentId').value || null;
+        const data = await post('/api/tools/list', agentId ? { agent_id: agentId } : {});
+        const body = document.getElementById('toolsBody');
+        body.innerHTML = (data.tools || []).map(t => `<tr><td>${t}</td><td><button class="action danger" onclick="deregisterTool('${t}')">Deregister</button></td></tr>`).join('');
+        if (!data.tools?.length) body.innerHTML = '<tr><td colspan="2" class="empty">No tools found</td></tr>';
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    async function deregisterTool(name) {
+      if (!name) name = document.getElementById('deregTool').value;
+      if (!name) return;
+      try { await post('/api/tools/deregister', { tool_name: name }); toast(`Deregistered ${name}`); listTools(); }
+      catch (e) { toast(e.message, 'error'); }
+    }
+    async function registerTool() {
+      const name = document.getElementById('regTool').value;
+      if (!name) return;
+      try { await post('/api/tools/register', { tool_name: name }); toast(`Registered ${name}`); listTools(); }
+      catch (e) { toast(e.message, 'error'); }
+    }
+    async function setScope() {
+      const agent = document.getElementById('scopeAgent').value;
+      const tools = document.getElementById('scopeTools').value.split(',').map(s => s.trim()).filter(Boolean);
+      if (!agent) return;
+      try { await post('/api/tools/scope', { agent_id: agent, tool_names: tools }); toast(`Scope set for ${agent}`); }
+      catch (e) { toast(e.message, 'error'); }
+    }
 
-  let currentHitlFilter = 'all';
-  async function loadHitl(filter) {
-    currentHitlFilter = filter;
-    document.querySelectorAll('#hitl .tab').forEach(t => t.classList.remove('active'));
-    event.target.classList.add('active');
-    try {
-      const body = filter === 'all' ? {} : {graph_name: filter};
-      const data = await post('/api/hitl/inbox', body);
-      const container = document.getElementById('hitlList');
-      if (!data.length) { container.innerHTML = '<div class="empty">No pending HITL tasks.</div>'; return; }
-      container.innerHTML = data.map(t => `
+    let currentHitlFilter = 'all';
+    async function loadHitl(filter) {
+      currentHitlFilter = filter;
+      document.querySelectorAll('#hitl .tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      try {
+        const body = filter === 'all' ? {} : { graph_name: filter };
+        const data = await post('/api/hitl/inbox', body);
+        const container = document.getElementById('hitlList');
+        if (!data.length) { container.innerHTML = '<div class="empty">No pending HITL tasks.</div>'; return; }
+        container.innerHTML = data.map(t => `
         <div class="card" style="margin-bottom:0.75rem;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;">
             <div>
               <strong>Task #${t.task_id}</strong> — <span class="badge paused_hitl">paused_hitl</span>
-              <div style="color:var(--muted);font-size:0.85rem;">Run: ${t.run_id} | Node: ${t.node_name} | Graph: ${t.graph_name||'unknown'}</div>
+              <div style="color:var(--muted);font-size:0.85rem;">Run: ${t.run_id} | Node: ${t.node_name} | Graph: ${t.graph_name || 'unknown'}</div>
             </div>
-            <div style="font-size:0.8rem;color:var(--muted);">${t.created_at||''}</div>
+            <div style="font-size:0.8rem;color:var(--muted);">${t.created_at || ''}</div>
           </div>
           <div style="margin:0.5rem 0;font-size:0.9rem;">${t.reason}</div>
-          <pre class="code">${JSON.stringify(t.current_state||{}, null, 2)}</pre>
+          <pre class="code">${JSON.stringify(t.current_state || {}, null, 2)}</pre>
           <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
             <button class="action primary" onclick="resolveHitl(${t.task_id}, 'approved')">Approve</button>
             <button class="action" onclick="resolveHitl(${t.task_id}, 'rejected')">Reject</button>
@@ -359,108 +639,124 @@
           </div>
         </div>
       `).join('');
-    } catch (e) { toast(e.message, 'error'); }
-  }
-  async function resolveHitl(taskId, decision, counterNote=null) {
-    try {
-      const body = {task_id: taskId, decision, resolved_by: auth().employee_id};
-      if (counterNote) body.counter_note = counterNote;
-      await post('/api/hitl/resolve', body);
-      toast(`HITL task ${taskId} resolved: ${decision}`);
-      loadHitl(currentHitlFilter);
-    } catch (e) { toast(e.message, 'error'); }
-  }
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    async function resolveHitl(taskId, decision, counterNote = null) {
+      try {
+        const body = { task_id: taskId, decision, resolved_by: auth().employee_id };
+        if (counterNote) body.counter_note = counterNote;
+        await post('/api/hitl/resolve', body);
+        toast(`HITL task ${taskId} resolved: ${decision}`);
+        loadHitl(currentHitlFilter);
+      } catch (e) { toast(e.message, 'error'); }
+    }
 
-  async function loadTicketStats() {
-    try {
-      const d = await get('/api/tickets/stats');
-      const row = document.getElementById('ticketStats');
-      const counts = d.total_by_status || {};
-      row.innerHTML = `
-        <div class="stat-box"><div class="num">${counts.open||0}</div><div class="label">Open</div></div>
-        <div class="stat-box"><div class="num">${counts.investigating||0}</div><div class="label">Investigating</div></div>
-        <div class="stat-box"><div class="num">${counts.resolved||0}</div><div class="label">Resolved</div></div>
+    async function loadTicketStats() {
+      try {
+        const d = await get('/api/tickets/stats');
+        const row = document.getElementById('ticketStats');
+        const counts = d.total_by_status || {};
+        row.innerHTML = `
+        <div class="stat-box"><div class="num">${counts.open || 0}</div><div class="label">Open</div></div>
+        <div class="stat-box"><div class="num">${counts.investigating || 0}</div><div class="label">Investigating</div></div>
+        <div class="stat-box"><div class="num">${counts.resolved || 0}</div><div class="label">Resolved</div></div>
       `;
-    } catch (e) { console.error("stats", e); }
-  }
-  let currentTicketStatus = 'open';
-  async function loadTickets(status) {
-    currentTicketStatus = status;
-    document.querySelectorAll('#tickets .tab').forEach(t => t.classList.remove('active'));
-    event.target.classList.add('active');
-    try {
-      const data = await post('/api/tickets/inbox', status==='all' ? {} : {status});
-      const container = document.getElementById('ticketsList');
-      if (!data.length) { container.innerHTML = '<div class="empty">No tickets.</div>'; return; }
-      container.innerHTML = data.map(t => `
+      } catch (e) { console.error("stats", e); }
+    }
+    let currentTicketStatus = 'open';
+    async function loadTickets(status) {
+      currentTicketStatus = status;
+      document.querySelectorAll('#tickets .tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      try {
+        const data = await post('/api/tickets/inbox', status === 'all' ? {} : { status });
+        const container = document.getElementById('ticketsList');
+        if (!data.length) { container.innerHTML = '<div class="empty">No tickets.</div>'; return; }
+        container.innerHTML = data.map(t => `
         <div class="card" style="margin-bottom:0.75rem;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;">
             <div>
               <strong>Ticket #${t.ticket_id}</strong> — <span class="badge ${t.status}">${t.status}</span>
-              <div style="color:var(--muted);font-size:0.85rem;">Run: ${t.run_id} | Node: ${t.node_name} | Graph: ${t.graph_name||'unknown'}</div>
+              <div style="color:var(--muted);font-size:0.85rem;">Run: ${t.run_id} | Node: ${t.node_name} | Graph: ${t.graph_name || 'unknown'}</div>
             </div>
-            <div style="font-size:0.8rem;color:var(--muted);">${t.created_at||''}</div>
+            <div style="font-size:0.8rem;color:var(--muted);">${t.created_at || ''}</div>
           </div>
           <div style="margin:0.5rem 0;color:var(--danger);font-size:0.9rem;">${t.error_message}</div>
-          <pre class="code">${JSON.stringify(t.current_state||{}, null, 2)}</pre>
+          <pre class="code">${JSON.stringify(t.current_state || {}, null, 2)}</pre>
           ${t.status !== 'resolved' ? `
           <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap;">
             <input id="resText${t.ticket_id}" placeholder="Resolution note" style="flex:1 1 240px;" />
+            <input id="resState${t.ticket_id}" placeholder='Optional fix (JSON, e.g. {"equipment_id":1,"project_id":1,"site":"Site A"})' style="flex:2 1 320px;" />
             <button class="action" onclick="investigateTicket(${t.ticket_id})">Mark Investigating</button>
             <button class="action primary" onclick="resolveTicket(${t.ticket_id})">Resolve & Resume</button>
-          </div>` : `<div style="margin-top:0.5rem;color:var(--muted);font-size:0.85rem;">Resolution: ${t.resolution||'—'}</div>`}
+          </div>` : `<div style="margin-top:0.5rem;color:var(--muted);font-size:0.85rem;">Resolution: ${t.resolution || '—'}</div>`}
         </div>
       `).join('');
-    } catch (e) { toast(e.message, 'error'); }
-  }
-  async function investigateTicket(id) {
-    try { await fetch(`${API()}/api/tickets/investigate/${id}?admin_id=${auth().employee_id}`, {method:'POST'}); toast(`Ticket ${id} investigating`); loadTickets(currentTicketStatus); loadTicketStats(); }
-    catch (e) { toast(e.message, 'error'); }
-  }
-  async function resolveTicket(id) {
-    const resolution = document.getElementById(`resText${id}`).value;
-    if (!resolution) return toast('Enter a resolution note', 'error');
-    try { await post('/api/tickets/resolve', {ticket_id: id, resolution}); toast(`Ticket ${id} resolved`); loadTickets(currentTicketStatus); loadTicketStats(); }
-    catch (e) { toast(e.message, 'error'); }
-  }
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    async function investigateTicket(id) {
+      try { await fetch(`${API()}/api/tickets/investigate/${id}?admin_id=${auth().employee_id}`, { method: 'POST' }); toast(`Ticket ${id} investigating`); loadTickets(currentTicketStatus); loadTicketStats(); }
+      catch (e) { toast(e.message, 'error'); }
+    }
 
-  async function ragStats() {
-    try { const d = await get('/api/rag-docs/stats'); document.getElementById('ragStats').innerHTML = `<div>Documents: ${d.total_documents||0}</div><div>Chunks: ${d.total_chunks||0}</div><div>Version: ${d.corpus_version||1}</div><div>Updated: ${d.last_updated||'—'}</div>`; }
-    catch (e) { toast(e.message, 'error'); }
-  }
-  async function listRag() {
-    try {
-      const data = await get('/api/rag-docs/list');
-      const container = document.getElementById('ragList');
-      if (!data.length) { container.innerHTML = '<div class="empty">No documents.</div>'; return; }
-      container.innerHTML = data.map(d => `
+    async function resolveTicket(id) {
+      const resolution = document.getElementById(`resText${id}`).value;
+      if (!resolution) return toast('Enter a resolution note', 'error');
+      const stateInput = document.getElementById(`resState${id}`).value.trim();
+      let updated_state = null;
+      if (stateInput) {
+        try { updated_state = JSON.parse(stateInput); }
+        catch { return toast('Fix JSON is invalid', 'error'); }
+      }
+      try {
+        const body = { ticket_id: id, resolution };
+        if (updated_state) body.updated_state = updated_state;
+        await post('/api/tickets/resolve', body);
+        toast(`Ticket ${id} resolved`); loadTickets(currentTicketStatus); loadTicketStats();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    }
+
+
+    async function ragStats() {
+      try { const d = await get('/api/rag-docs/stats'); document.getElementById('ragStats').innerHTML = `<div>Documents: ${d.total_documents || 0}</div><div>Chunks: ${d.total_chunks || 0}</div><div>Version: ${d.corpus_version || 1}</div><div>Updated: ${d.last_updated || '—'}</div>`; }
+      catch (e) { toast(e.message, 'error'); }
+    }
+    async function listRag() {
+      try {
+        const data = await get('/api/rag-docs/list');
+        const container = document.getElementById('ragList');
+        if (!data.length) { container.innerHTML = '<div class="empty">No documents.</div>'; return; }
+        container.innerHTML = data.map(d => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border);">
           <div>
-            <div style="font-weight:600;">${d.title||d.filename}</div>
+            <div style="font-weight:600;">${d.title || d.filename}</div>
             <div style="font-size:0.8rem;color:var(--muted);">${d.filename} • ${d.size_bytes} bytes • ${d.chunk_count} chunks</div>
           </div>
           <button class="action danger" onclick="removeRag('${d.doc_id}')">Remove</button>
         </div>
       `).join('');
-    } catch (e) { toast(e.message, 'error'); }
-  }
-  async function uploadRag() {
-    const file = document.getElementById('ragFile').files[0];
-    if (!file) return toast('Select a file', 'error');
-    const form = new FormData();
-    form.append('file', file);
-    form.append('title', document.getElementById('ragTitle').value || file.name);
-    try {
-      const res = await fetch(`${API()}/api/rag-docs/add`, {method:'POST', body:form});
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail||'Upload failed');
-      toast(`Uploaded ${data.doc_id}`); listRag(); ragStats();
-    } catch (e) { toast(e.message, 'error'); }
-  }
-  async function removeRag(docId) {
-    try { await post('/api/rag-docs/remove', {doc_id: docId}); toast(`Removed ${docId}`); listRag(); ragStats(); }
-    catch (e) { toast(e.message, 'error'); }
-  }
-</script>
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    async function uploadRag() {
+      const file = document.getElementById('ragFile').files[0];
+      if (!file) return toast('Select a file', 'error');
+      const form = new FormData();
+      form.append('file', file);
+      form.append('title', document.getElementById('ragTitle').value || file.name);
+      try {
+        const res = await fetch(`${API()}/api/rag-docs/add`, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        toast(`Uploaded ${data.doc_id}`); listRag(); ragStats();
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    async function removeRag(docId) {
+      try { await post('/api/rag-docs/remove', { doc_id: docId }); toast(`Removed ${docId}`); listRag(); ragStats(); }
+      catch (e) { toast(e.message, 'error'); }
+    }
+  </script>
 </body>
+
 </html>

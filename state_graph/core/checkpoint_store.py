@@ -51,6 +51,8 @@ class CheckpointStore:
             return json.loads(row["StateJSON"]), row["CurrentNode"], row["Status"]
 
     def save_checkpoint(self, run_id: str, state: Dict[str, Any], next_node: str, status: str) -> None:
+        print(f"💾 save_checkpoint called for run {run_id}, state keys: {list(state.keys())}") 
+        
         """Called after every node transition -- success, HITL pause, or
         ticket. `next_node` is whichever node should run when this run
         is next resumed (for a successful step, that's the node the

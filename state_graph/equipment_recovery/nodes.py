@@ -137,21 +137,17 @@ def _llm_decompose_breakdown_with_retry(raw_request: str, max_retries: int = 2) 
     raise last_error  # pragma: no cover
 
 def report_breakdown(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Entry node. Just records that a run has started for this piece
-    of equipment -- no diagnosis yet, on purpose (see module docstring
-    on why this is a separate node from diagnose_issue).
+    print(f"📥 report_breakdown received state keys: {list(state.keys())}")
+    print(f"📥 Values: equipment_id={state.get('equipment_id')}, project_id={state.get('project_id')}, site={state.get('site')}, reported_symptom={state.get('reported_symptom')}")
+    existing = {k: state[k] for k in _REQUIRED_BREAKDOWN_FIELDS if state.get(k) is not None}
 
-    TASK DECOMPOSITION addition: accepts either a ready-made structured
-    state (backward compatible -- test_equipment_recovery.py and any
-    programmatic caller keep working unchanged) OR a single free-text
-    "request" field, which an LLM call decomposes into the required
-    fields. Mirrors state_graph/change_order/nodes.py's
-    decompose_change_order_node, so a real end user typing a plain
-    sentence in the chat UI works the same way across both agents
-    instead of the frontend needing its own separate parsing logic.
-    """
-    if all(k in state for k in _REQUIRED_BREAKDOWN_FIELDS):
-        structured = {k: state[k] for k in _REQUIRED_BREAKDOWN_FIELDS}
+    # NEW: If admin fixed via ticket but didn't send reported_symptom,
+    # derive it from the original request so we don't call LLM again.
+    if "request" in state and "reported_symptom" not in existing:
+        existing["reported_symptom"] = state["request"]
+
+    if all(k in existing for k in _REQUIRED_BREAKDOWN_FIELDS):
+        structured = existing
     else:
         raw_request = state.get("request")
         if not raw_request:
@@ -159,18 +155,15 @@ def report_breakdown(state: Dict[str, Any]) -> Dict[str, Any]:
                 f"report_breakdown needs either {_REQUIRED_BREAKDOWN_FIELDS} "
                 f"directly, or a 'request' free-text field to decompose."
             )
-        # If this raises (e.g. equipment_id couldn't be determined),
-        # it propagates up as-is -- no partial 'structured' to fall
-        # back on, which is correct: a half-decomposed request isn't
-        # safe to proceed with.
-        structured = _llm_decompose_breakdown_with_retry(raw_request)
-
+        decomposed = _llm_decompose_breakdown_with_retry(raw_request)
+        structured = {**decomposed, **existing}
+    
     return {
         **structured,
         "status_note": f"Breakdown reported for equipment {structured['equipment_id']} "
                         f"at {structured['site']}: {structured['reported_symptom']}",
     }
-
+    # ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
 
 def diagnose_issue(state: Dict[str, Any]) -> Dict[str, Any]:
     """RAG addition: grounds the diagnosis in the equipment manuals /
@@ -248,9 +241,36 @@ def approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
             "proposed_cost": state["proposed_cost"],
             "remaining_budget": remaining_budget,
             "rationale": state["proposal_rationale"],
+            "decision_key": decision_key,
         },
-          decision_key=decision_key,
+        decision_key=decision_key,
     )
+
+    # require_hitl() only checks whether decision_key is PRESENT in
+    # state, not whether it holds a real decision. This node clears a
+    # consumed decision by writing {decision_key: None} -- but state
+    # only ever merges (keys are never truly deleted, see
+    # core/hitl.py's own cycle-safety notes), so the key stays
+    # "present" with value None. If this run is somehow re-entered
+    # after already being approved, require_hitl would otherwise
+    # return None here instead of pausing fresh -- decision is None,
+    # not "approved" or a rejection string, so re-raise a fresh pause
+    # explicitly instead of silently falling through to the rejection
+    # branch below.
+    if decision is None:
+        from state_graph.core.hitl import HITLPause
+        raise HITLPause(
+            f"Awaiting a fresh admin decision for {state['proposed_action']} "
+            f"(this run's previous decision on this exact proposal was already consumed).",
+            payload={
+                "equipment_id": state["equipment_id"],
+                "project_id": state["project_id"],
+                "proposed_action": state["proposed_action"],
+                "proposed_cost": state["proposed_cost"],
+                "remaining_budget": remaining_budget,
+                "rationale": state["proposal_rationale"],
+            },
+        )
 
     if decision == "approved":
         # Clear hitl_decision now that it's been consumed -- otherwise

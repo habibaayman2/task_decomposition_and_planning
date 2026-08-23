@@ -46,13 +46,17 @@ class TicketOut(BaseModel):
     current_state: Optional[Dict[str, Any]] = None
 
 
+# class TicketResolution(BaseModel):
+#     ticket_id: int = Field(ge=1)
+#     resolution: str = Field(min_length=5, max_length=1000, description="Human explanation of the fix")
+#     updated_state: Optional[Dict[str, Any]] = Field(
+#         None,
+#         description="Optional state corrections to apply before resuming (e.g. fix a missing key)"
+#     )
 class TicketResolution(BaseModel):
-    ticket_id: int = Field(ge=1)
-    resolution: str = Field(min_length=5, max_length=1000, description="Human explanation of the fix")
-    updated_state: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Optional state corrections to apply before resuming (e.g. fix a missing key)"
-    )
+    ticket_id: int
+    resolution: str
+    updated_state: Optional[Dict[str, Any]] = None   # ← لازم يكون موجود
 
 
 class TicketFilter(BaseModel):
@@ -189,6 +193,8 @@ def get_ticket(ticket_id: int):
 
 @router.post("/resolve")
 def resolve_ticket(resolution: TicketResolution):
+    print(f"📦 FULL resolution object: {resolution.dict()}")
+    print(f"📦 updated_state value: {resolution.updated_state}")
     """Resolve an open ticket and resume the underlying graph run from its
     last checkpoint -- NOT from the beginning.
 
@@ -226,8 +232,11 @@ def resolve_ticket(resolution: TicketResolution):
         loaded = default_store.load(run_id)
         if loaded:
             state, current_node, status = loaded
+            print(f"🔧 BEFORE update: {state}")  # ← أضيفي
             state.update(resolution.updated_state)
+            print(f"🔧 AFTER update: {state}")   # ← أضيفي
             default_store.save_checkpoint(run_id, state, current_node, status="running")
+            print(f"🔧 Checkpoint saved for run {run_id}")
 
     # Resume the graph
     graph_name = None
@@ -241,9 +250,72 @@ def resolve_ticket(resolution: TicketResolution):
                 graph_name = g_row["GraphName"]
     except Exception:
         pass
-
+    
+    
+    # If admin provided corrected fields, merge them into the checkpoint
+    # BEFORE resuming so the graph sees the fix, not the old broken state
+    # if resolution.updated_state:
+    #  checkpoint = default_store.load(run_id)
+    #  if checkpoint:
+    #     state, config, status = checkpoint
+    #     merged_state = {**state, **resolution.updated_state}
+    #     default_store.save(run_id, merged_state, config, status)
     resumed_state = _resume_graph(run_id, graph_name)
 
+    # Same fix as hitl.py's resolve_hitl_task: write the outcome back
+    # into ChatMessages/ChatSessions so the user actually sees a
+    # result in their chat thread after a ticket is resolved, not
+    # just a server-side resume with nothing surfaced to them.
+    final_status = default_store.load(run_id)
+    session_id = None
+    msg = None
+    if final_status:
+        _, _, new_status = final_status
+
+        with default_store._get_conn() as conn:
+            session_row = conn.execute(
+                "SELECT SessionID FROM ChatSessions WHERE RunID = ?", (run_id,)
+            ).fetchone()
+
+            if session_row:
+                session_id = session_row["SessionID"]
+
+                if new_status == "completed":
+                    msg = f"✅ Ticket resolved. " + (
+                        f"Result: {resumed_state.get('execution_result', 'Task completed.')}"
+                    )
+                    msg_type = "status_completed"
+                elif new_status == "paused_hitl":
+                    msg = "⏸️ Issue resolved, but this now needs admin approval before continuing."
+                    msg_type = "status_paused_hitl"
+                elif new_status == "ticket_open":
+                    msg = "⚠️ The issue recurred after resolving. A new support ticket has been opened."
+                    msg_type = "status_ticket"
+                else:
+                    msg = f"Run status updated to: {new_status}"
+                    msg_type = "text"
+
+                conn.execute(
+                    "INSERT INTO ChatMessages (SessionID, Sender, Content, MessageType) "
+                    "VALUES (?, ?, ?, ?)",
+                    (session_id, "agent", msg, msg_type),
+                )
+                conn.execute(
+                    "UPDATE ChatSessions SET Status = ? WHERE SessionID = ?",
+                    (new_status, session_id),
+                )
+        ### SSE BROADCAST ###
+        if session_id is not None:
+            try:
+                from ib_platform.backend.routes.chat import broadcast_session_update_sync
+                broadcast_session_update_sync(session_id, {
+                    "type": "ticket_resolved",
+                    "status": new_status,
+                    "message": msg,
+                })
+            except Exception:
+                pass  # SSE is best-effort; don't fail if broadcast fails
+        ### END SSE BROADCAST ###
     return {
         "ticket_id": resolution.ticket_id,
         "run_id": run_id,

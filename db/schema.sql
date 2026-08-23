@@ -97,3 +97,23 @@ CREATE TABLE AuditLog (
     Detail      TEXT,
     At          TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Platform chat tables
+CREATE TABLE IF NOT EXISTS ChatSessions (
+    SessionID INTEGER PRIMARY KEY AUTOINCREMENT,
+    UserID INTEGER NOT NULL,
+    AgentName TEXT NOT NULL,
+    Status TEXT NOT NULL DEFAULT 'active',
+    RunID TEXT,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ChatMessages (
+    MessageID INTEGER PRIMARY KEY AUTOINCREMENT,
+    SessionID INTEGER NOT NULL,
+    Sender TEXT NOT NULL,
+    Content TEXT NOT NULL,
+    MessageType TEXT DEFAULT 'text',
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (SessionID) REFERENCES ChatSessions(SessionID)
+);
