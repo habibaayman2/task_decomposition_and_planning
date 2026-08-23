@@ -177,6 +177,7 @@ def prepare_pruned_messages(messages: list[dict], keep_last_n_tool_outputs: int 
 
 
 async def run_agent(transport: str, http_url: str | None, http_token: str | None):
+    global SESSION
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         print(
@@ -186,6 +187,119 @@ async def run_agent(transport: str, http_url: str | None, http_token: str | None
             "the server would also fail without it."
         )
         return
+
+async def handle_single_message(user_text: str) -> str:
+    """Single-message entrypoint for the chat API (ib_platform/backend),
+    as opposed to run_agent()'s interactive stdin loop above.
+
+    Opens its own short-lived MCP session and memory objects per call
+    (simpler and safer for a stateless HTTP request than trying to
+    keep one long-lived session across chat requests), runs the same
+    RAG-injection + tool-calling logic as run_agent()'s inner loop for
+    exactly one turn, and returns the final assistant text instead of
+    printing it.
+    """
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return (
+            "GROQ_API_KEY is not set on the server, so I can't process "
+            "requests right now. Please contact an administrator."
+        )
+
+    from groq import Groq
+    groq_client = Groq(api_key=api_key)
+
+    session_id = str(uuid.uuid4())
+    episodic_store = EpisodicStore()
+    checker = SelfRAGChecker()
+    session_mem = SessionMemory(session_id, max_turns=20)
+
+    state = {"groq_tools": []}
+
+    async def refresh_tools():
+        result = await SESSION.list_tools()
+        state["groq_tools"] = [mcp_tool_to_groq(t) for t in result.tools]
+
+    connect_kwargs = dict(
+        transport="stdio",
+        auto_elicit_answers=None,
+        on_tools_changed=refresh_tools,
+        server_command=[sys.executable, "mcp_server/server.py"],
+        server_cwd=REPO_ROOT,
+    )
+
+    async with mcp_client.connect(**connect_kwargs) as (session, _init_result):
+        global SESSION
+        SESSION = session
+        await refresh_tools()
+
+        conversation: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        conversation.append({"role": "user", "content": user_text})
+        session_mem.scratchpad.update(
+            plan=f"respond to: {user_text[:80]}",
+            sub_goal="awaiting model response / tool calls",
+        )
+        session_mem.add_turn("user", user_text)
+
+        rag_fired_this_turn = False
+        if _is_policy_question(user_text):
+            if _is_multi_part_question(user_text):
+                rag_result = agentic_rag_answer(user_text, top_k_per_hop=4)
+            else:
+                rag_result = hybrid_rag_answer(user_text, top_k=5)
+            rag_injection = (
+                f"[RETRIEVED POLICY CONTEXT — ANSWER DIRECTLY FROM THIS, "
+                f"DO NOT CALL ANY TOOLS]\n{rag_result['answer']}\n"
+                f"[END RETRIEVED POLICY CONTEXT]"
+            )
+            conversation.append({"role": "system", "content": rag_injection})
+            rag_fired_this_turn = True
+
+        recalled = [e.content for e in episodic_store.recall(session_id=session_id)]
+        recalled = checker.filter_relevant(user_text, recalled)
+        memory_msg = {"role": "system", "content": session_mem.scratchpad.as_context_block()}
+        if recalled:
+            memory_msg["content"] += "\n[RELEVANT MEMORY]\n" + "\n".join(f"- {r}" for r in recalled)
+
+        final_text = ""
+        for _ in range(6):  # safety cap on tool-call rounds for a single turn
+            pruned_conversation = prepare_pruned_messages(conversation)
+            api_kwargs = {
+                "model": MODEL,
+                "max_tokens": 1024,
+                "messages": pruned_conversation + [memory_msg],
+            }
+            if not rag_fired_this_turn:
+                api_kwargs["tools"] = state["groq_tools"]
+
+            response = groq_client.chat.completions.create(**api_kwargs)
+            message = response.choices[0].message
+
+            assistant_msg = {"role": "assistant", "content": message.content}
+            if message.tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id, "type": tc.type,
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in message.tool_calls
+                ]
+            conversation.append(assistant_msg)
+
+            if not message.tool_calls:
+                final_text = message.content or ""
+                break
+
+            if rag_fired_this_turn:
+                break
+
+            for tc in message.tool_calls:
+                args = json.loads(tc.function.arguments or "{}")
+                result = await session.call_tool(tc.function.name, args)
+                text = "".join(c.text for c in result.content if hasattr(c, "text"))
+                conversation.append({"role": "tool", "tool_call_id": tc.id, "content": text})
+
+        return final_text or "I processed your request but didn't have a text response to show."
 
     from groq import Groq
 
@@ -225,7 +339,6 @@ async def run_agent(transport: str, http_url: str | None, http_token: str | None
         connect_kwargs["http_token"] = http_token
 
     async with mcp_client.connect(**connect_kwargs) as (session, init_result):
-        global SESSION
         SESSION = session
 
         # === CONCERN: Capability negotiation (client side) ===

@@ -77,6 +77,6 @@ def require_hitl(
     the payload passed to open_hitl_task() should carry decision_key so
     whichever platform route resolves the task can read it back.
     """
-    if decision_key in state:
+    if state.get(decision_key) is not None:
         return state[decision_key]
     raise HITLPause(reason, payload)

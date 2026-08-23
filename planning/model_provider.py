@@ -303,20 +303,154 @@ def _propose_plan(project_id: int) -> str:
     )
 
 
+def _reasoning_effort_rejected(exc: Exception) -> bool:
+    """True if *exc* is Groq's 400 for an unsupported reasoning_effort value
+    (e.g. 'reasoning_effort must be one of none or default'). This is a
+    RUNTIME/API-level rejection, distinct from the construction-time
+    ValidationError that the old try/except in _build_chat_groq caught --
+    some Groq models/endpoints happily construct a ChatGroq with
+    reasoning_effort="low" but then reject it on the actual call."""
+    text = str(exc).lower()
+    return "reasoning_effort" in text and "must be one of" in text
+
+
+class _ReasoningEffortFallbackStructured:
+    """Wraps the Runnable returned by .with_structured_output() so a
+    runtime reasoning_effort rejection on a structured call also falls
+    back correctly (used by ungrounded Reflexion's judge_llm.with_structured_output(...))."""
+
+    def __init__(self, owner: "_ReasoningEffortFallbackChatModel", structured, schema, kwargs):
+        self._owner = owner
+        self._structured = structured
+        self._schema = schema
+        self._kwargs = kwargs
+
+    def invoke(self, *args, **kwargs):
+        try:
+            return self._structured.invoke(*args, **kwargs)
+        except Exception as exc:
+            if self._owner._plain_llm is None and _reasoning_effort_rejected(exc):
+                fallback = self._owner._fallback()
+                self._structured = fallback.with_structured_output(self._schema, **self._kwargs)
+                return self._structured.invoke(*args, **kwargs)
+            raise
+
+
+class _ReasoningEffortFallbackChatModel:
+    """Thin proxy around a ChatGroq built WITH reasoning_effort set.
+
+    If the underlying API rejects that value at CALL time (some Groq
+    models only accept 'none'/'default', not 'low'/'medium'/'high' --
+    see _reasoning_effort_rejected), this transparently rebuilds a plain
+    ChatGroq without reasoning_effort, retries the failed call once on
+    it, and keeps using the plain instance for every later call so the
+    same 400 isn't re-hit on every single invocation for the rest of the
+    run. Delegates .invoke() and .with_structured_output() -- the only
+    two entry points this codebase's algorithms use.
+    """
+
+    def __init__(self, model_name: str, temperature: float, max_tokens: int, reasoning_effort: str):
+        from langchain_groq import ChatGroq
+        self._model_name = model_name
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._llm = ChatGroq(
+            model=model_name,
+            api_key=os.environ["GROQ_API_KEY"],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
+        self._plain_llm = None  # built lazily, only if/when reasoning_effort is rejected
+
+    def _fallback(self):
+        from langchain_groq import ChatGroq
+        if self._plain_llm is None:
+            print(f"[model_provider] Groq rejected reasoning_effort for "
+                  f"{self._model_name} at call time -- switching to plain "
+                  f"ChatGroq (no reasoning_effort) for the rest of this run.")
+            self._plain_llm = ChatGroq(
+                model=self._model_name,
+                api_key=os.environ["GROQ_API_KEY"],
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+            )
+        return self._plain_llm
+
+    def invoke(self, *args, **kwargs):
+        active = self._plain_llm or self._llm
+        try:
+            return active.invoke(*args, **kwargs)
+        except Exception as exc:
+            if active is self._llm and _reasoning_effort_rejected(exc):
+                return self._fallback().invoke(*args, **kwargs)
+            raise
+
+    def with_structured_output(self, schema, **kwargs):
+        active = self._plain_llm or self._llm
+        structured = active.with_structured_output(schema, **kwargs)
+        return _ReasoningEffortFallbackStructured(self, structured, schema, kwargs)
+
+
+def _build_chat_groq(model_name: str, temperature: float, max_tokens: int) -> "BaseChatModel":
+    """Constructs a ChatGroq instance with reasoning_effort capped, tolerant
+    of differences across langchain-groq versions AND of Groq rejecting
+    the value at call time rather than construction time.
+
+    gpt-oss models spend part of max_tokens on a hidden reasoning pass
+    before writing the actual answer/JSON. At default effort this can
+    exhaust the whole budget on a json_mode call, surfacing as a 400
+    json_validate_failed with an EMPTY failed_generation (see
+    full_comparison.py's classify_error()). Capping reasoning effort
+    leaves more of the budget for the actual output.
+
+    Newer langchain-groq versions declare reasoning_effort as an explicit
+    field (passing it via model_kwargs raises a pydantic ValidationError
+    at construction time, before any API call). Older versions may not
+    know the field at all. Try the explicit kwarg first and fall back to
+    plain construction if THAT fails for any reason.
+
+    Separately -- and this is the gap the old version had -- some Groq
+    models/endpoints accept reasoning_effort at construction time but
+    reject it with a 400 on the actual API call ('reasoning_effort must
+    be one of none or default'). That can't be caught here since no API
+    call happens at construction; _ReasoningEffortFallbackChatModel wraps
+    the returned model so that rejection is caught and retried the first
+    time it actually happens, mid-run.
+    """
+    from langchain_groq import ChatGroq
+
+    reasoning_effort = os.environ.get("GROQ_REASONING_EFFORT", "low")
+    try:
+        return _ReasoningEffortFallbackChatModel(
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
+    except Exception as exc:
+        print(f"[model_provider] reasoning_effort not supported by this "
+              f"langchain-groq version ({exc.__class__.__name__}) -- "
+              f"falling back to plain ChatGroq without it.")
+        return ChatGroq(
+            model=model_name,
+            api_key=os.environ["GROQ_API_KEY"],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+
 def get_planning_llm(model: Optional[str] = None) -> BaseChatModel:
     """
     تعديل الوظيفة لتقبل متغير model الممرر من الـ CLI
     """
     if has_real_llm():
         try:
-            from langchain_groq import ChatGroq
-
             model_name = model or os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-
-            return ChatGroq(
-                model=model_name,
-                api_key=os.environ["GROQ_API_KEY"],
+            return _build_chat_groq(
+                model_name=model_name,
                 temperature=0.2,
+                max_tokens=int(os.environ.get("GROQ_MAX_TOKENS", "4096")),
             )
         except ImportError:
             print("[Warning] langchain_groq not installed.")

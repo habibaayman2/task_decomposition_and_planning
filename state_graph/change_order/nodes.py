@@ -138,17 +138,27 @@ def decompose_change_order_node(state: Dict[str, Any]) -> Dict[str, Any]:
     raw_request = state.get("request")
     if not raw_request:
         raise TicketableError(
-            "Missing \'request\' payload in state.",
+            "Missing 'request' payload in state.",
             context={"state_keys": list(state.keys())},
         )
 
     # ------------------------------------------------------------------
-    # Structured path (backward compat) or LLM decomposition path
+    # Fields already sitting directly on `state` (e.g. an admin's
+    # ticket-resolution correction, applied via updated_state) take
+    # priority -- no need to re-run the LLM decomposition if a human
+    # already supplied everything explicitly.
     # ------------------------------------------------------------------
-    if isinstance(raw_request, dict) and all(k in raw_request for k in _REQUIRED_REQUEST_FIELDS):
+    existing = {k: state[k] for k in _REQUIRED_REQUEST_FIELDS if state.get(k) is not None}
+
+    if all(k in existing for k in _REQUIRED_REQUEST_FIELDS):
+        structured = existing
+    elif isinstance(raw_request, dict) and all(k in raw_request for k in _REQUIRED_REQUEST_FIELDS):
         structured = raw_request
     else:
-        structured = _llm_decompose_with_retry(raw_request, max_retries=2)
+        decomposed = _llm_decompose_with_retry(raw_request, max_retries=2)
+        # Any field an admin already fixed directly on state overrides
+        # the LLM's fresh guess from the same raw text.
+        structured = {**decomposed, **existing}
 
     # ------------------------------------------------------------------
     # Grounded validation against live DB
@@ -242,6 +252,47 @@ def _parse_decomposition_response(response: str) -> Dict[str, Any]:
             f"LLM decomposition missing fields: {missing}",
             context={"llm_response": response[:500], "parsed": parsed},
         )
+    # Check for unresolved required fields BEFORE attempting numeric
+    # coercion, so the error message tells the user what's missing
+    # in plain language instead of a raw Python TypeError.
+    field_hints = {
+        "project_id": "which project this affects (e.g. 'project 1')",
+        "cost_delta": "the estimated cost impact (a dollar amount)",
+        "schedule_delta_days": "the schedule impact in days",
+        "employee_id": "who is submitting this request",
+    }
+    unresolved = [
+        k for k in ("project_id", "cost_delta", "schedule_delta_days", "employee_id")
+        if parsed.get(k) is None
+    ]
+    if unresolved:
+        needed = ", ".join(field_hints[k] for k in unresolved)
+        raise TicketableError(
+            f"Could not determine {needed} from your message. "
+            f"Please include these details and try again.",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
+
+    # Check for unresolved required fields BEFORE attempting numeric
+    # coercion, so the error message tells the user what's missing
+    # in plain language instead of a raw Python TypeError.
+    field_hints = {
+        "project_id": "which project this affects (e.g. 'project 1')",
+        "cost_delta": "the estimated cost impact (a dollar amount)",
+        "schedule_delta_days": "the schedule impact in days",
+        "employee_id": "who is submitting this request",
+    }
+    unresolved = [
+        k for k in ("project_id", "cost_delta", "schedule_delta_days", "employee_id")
+        if parsed.get(k) is None
+    ]
+    if unresolved:
+        needed = ", ".join(field_hints[k] for k in unresolved)
+        raise TicketableError(
+            f"Could not determine {needed} from your message. "
+            f"Please include these details and try again.",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
 
     # Type coercion with clear error messages
     try:
@@ -256,8 +307,7 @@ def _parse_decomposition_response(response: str) -> Dict[str, Any]:
         raise TicketableError(
             f"LLM decomposition field type error: {exc}",
             context={"llm_response": response[:500], "parsed": parsed},
-        )
-
+        ) 
 
 # ==========================================================================
 # NODE 2 — CONSTRAINED ReAct (LLM Addition #2)

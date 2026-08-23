@@ -26,7 +26,14 @@ def setup_vector_store():
 
     # 2. Storage path
     path = os.path.join(os.path.dirname(__file__), "qdrant_data")
-    _client_instance = QdrantClient(path=path)
+    try:
+        _client_instance = QdrantClient(path=path)
+    except RuntimeError as e:
+        # This machine (IT-managed laptop) sometimes blocks file-level
+        # locking on this folder even when no other process is using
+        # it. Fall back to an in-memory index so the graph still runs.
+        print(f"⚠️ Could not open persistent Qdrant storage ({e}). Falling back to in-memory index.")
+        _client_instance = QdrantClient(":memory:")
 
     # 3. Check if collection already exists and has data
     collection_exists = _client_instance.collection_exists(COLLECTION_NAME)
@@ -40,6 +47,39 @@ def setup_vector_store():
             embedding=embeddings,
         )
         return _vector_store_instance
+
+    # 4. First time: chunk, embed, index -- build via the existing
+    # _client_instance (which already has the in-memory fallback
+    # applied above) instead of from_documents(path=...), which would
+    # try to open the storage folder AGAIN on its own and re-trigger
+    # the same lock error even after the fallback above succeeded.
+    chunks = get_policy_chunks()
+    print(f"Indexing {len(chunks)} chunks into Qdrant (first-time setup)...")
+
+    if not _client_instance.collection_exists(COLLECTION_NAME):
+        sample_vector = embeddings.embed_query("sample")
+        _client_instance.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=models.VectorParams(size=len(sample_vector), distance=models.Distance.COSINE),
+        )
+
+    _vector_store_instance = QdrantVectorStore(
+        client=_client_instance,
+        collection_name=COLLECTION_NAME,
+        embedding=embeddings,
+    )
+    _vector_store_instance.add_documents(chunks)
+
+    # 5. Metadata payload index for filtering
+    print("Creating payload index on metadata.source...")
+    _vector_store_instance.client.create_payload_index(
+        collection_name=COLLECTION_NAME,
+        field_name="metadata.source",
+        field_schema="keyword",
+    )
+
+    print("✅ Qdrant Vector Store is ready, indexed, and payload-indexed!")
+    return _vector_store_instance
 
     # 4. First time: chunk, embed, index
     chunks = get_policy_chunks()

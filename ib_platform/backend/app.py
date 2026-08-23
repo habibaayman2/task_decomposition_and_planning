@@ -93,6 +93,7 @@ except Exception as e:
 # does not prevent the other from mounting
 # ---------------------------------------------------------------------------
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+frontend_fixed_dir = Path(__file__).resolve().parent.parent / "frontend_fixed"
 
 if frontend_dir.exists():
     admin_dir = frontend_dir / "admin"
@@ -112,6 +113,12 @@ if frontend_dir.exists():
         print(f"[WARNING] User frontend missing: {user_dir}")
 else:
     print(f"[WARNING] Frontend directory not found at {frontend_dir}")
+
+if frontend_fixed_dir.exists():
+    fixed_user_dir = frontend_fixed_dir / "user"
+    if fixed_user_dir.exists():
+        app.mount("/user_fixed", StaticFiles(directory=str(fixed_user_dir), html=True), name="user_fixed")
+        print(f"[StaticFiles] /user_fixed -> {fixed_user_dir}")
 
 # ---------------------------------------------------------------------------
 # Health check — useful for verifying which routes loaded

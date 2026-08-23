@@ -154,8 +154,15 @@ def _grounded_checks(state: str) -> tuple[list[str], float]:
     if m_pid:
         project_id = int(m_pid.group(1))
     else:
+        # Fatal, not partial: with no ProjectID, every downstream check
+        # (budget, contract status) is unverifiable against the real
+        # DB -- the plan is pure LLM invention with nothing grounding
+        # it, so this must zero the score, not just dock it, otherwise
+        # a plan can score above threshold while stating "GROUNDING
+        # FAIL" in its own details (exactly what happened here).
         issues.append("GROUNDING FAIL: No ProjectID mentioned. Cannot verify budget.")
-        score -= 0.3
+        score = 0.0
+        return issues, score
 
     # 2. Extract Dollar Amounts ($) from the text
     m_cost = re.search(r"\$\s?([\d,]+(?:\.\d+)?)", state)

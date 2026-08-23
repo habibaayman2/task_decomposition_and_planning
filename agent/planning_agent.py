@@ -229,6 +229,7 @@ async def run_planning_agent(user_text: str, episodic_memory: list[str] = None) 
 # Main Agent Loop
 # ---------------------------------------------------------------------------
 async def run_agent(transport: str, http_url: str | None, http_token: str | None):
+    global SESSION
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         print("GROQ_API_KEY is not set — get a free key at https://console.groq.com")
@@ -263,7 +264,7 @@ async def run_agent(transport: str, http_url: str | None, http_token: str | None
         connect_kwargs["http_token"] = http_token
 
     async with mcp_client.connect(**connect_kwargs) as (session, init_result):
-        global SESSION
+        
         SESSION = session
 
         print(f"Connected to {init_result.serverInfo.name} v{init_result.serverInfo.version}")

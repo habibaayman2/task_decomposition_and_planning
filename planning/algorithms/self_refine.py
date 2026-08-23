@@ -314,10 +314,22 @@ def self_refine(
     # ---- Critique ----
     if environment is not None:
         critique, env_feedback = _grounded_critique(goal, draft, llm, environment)
+        llm_calls += 1
     else:
         critique = _ungrounded_critique(goal, draft, llm)
-        env_feedback = None
-    llm_calls += 1
+        llm_calls += 1
+        # BUGFIX: this branch used to leave env_feedback=None for the
+        # entire ungrounded run. full_comparison.py's run_self_refine()
+        # reads res.environment_feedback and treats a missing feedback as
+        # an automatic success=False/score=0.0 -- so every ungrounded
+        # Self-Refine call was scoring 0.0 regardless of draft quality,
+        # not because ungrounded self-correction is actually bad.
+        # _ungrounded_self_evaluate() already existed for exactly this
+        # (LLM judges its own draft with no external validation) but was
+        # never being called. Evaluate the draft now so ungrounded mode
+        # gets a real (if unverified) score, same as every other method.
+        env_feedback = _ungrounded_self_evaluate(goal, draft, llm)
+        llm_calls += 1
 
     # ---- Revise (only if critique found issues) ----
     # Grounded checks are already folded into the critique prompt (see

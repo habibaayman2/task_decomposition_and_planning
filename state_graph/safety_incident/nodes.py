@@ -150,9 +150,109 @@ def _stub_fallback(prompt: str) -> str:
         return _stub_regulator_react(prompt)
     return "Thought: Unable to reach the LLM provider; defaulting to a safe fallback.\nAction: flag_incomplete_for_review"
 
+_REQUIRED_INCIDENT_FIELDS = ("project_id", "description", "severity", "employee_id")
+
+
+def _build_incident_prompt(raw_request: str) -> str:
+    return f"""You are a safety-incident intake assistant for a
+construction company. A worker or site engineer has reported a safety
+incident in plain language. Decompose it into a JSON object with
+exactly these keys:
+  - project_id: integer (which project/site this happened at)
+  - description: string (concise summary of what happened, max 200 chars)
+  - severity: string, one of: "low", "medium", "high", "critical"
+  - employee_id: integer (the person reporting/submitting this)
+
+If any field cannot be determined, set it to null.
+
+EXAMPLE:
+Raw request: "A worker fell from scaffolding at the Riverside Tower
+site (project 1), broke his arm, reported by employee 3."
+Response: {{"project_id": 1, "description": "Worker fell from scaffolding, broken arm", "severity": "high", "employee_id": 3}}
+
+Now decompose this request:
+{raw_request}
+
+Respond with ONLY valid JSON, no markdown, no explanation."""
+
+
+def _parse_incident_response(response: str) -> Dict[str, Any]:
+    cleaned = re.sub(r"```(?:json)?\s*", "", response).strip()
+    cleaned = re.sub(r"\s*```", "", cleaned).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise TicketableError(
+            f"LLM incident decomposition produced unparseable JSON: {exc}",
+            context={"llm_response": response[:500]},
+        )
+
+    missing = set(_REQUIRED_INCIDENT_FIELDS) - set(parsed.keys())
+    if missing:
+        raise TicketableError(
+            f"LLM incident decomposition missing fields: {missing}",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
+
+    field_hints = {
+        "project_id": "which project/site this happened at (e.g. 'project 1')",
+        "description": "what happened",
+        "severity": "how severe it was (low/medium/high/critical)",
+        "employee_id": "who is reporting this (e.g. 'employee 1')",
+    }
+    unresolved = [k for k in _REQUIRED_INCIDENT_FIELDS if parsed.get(k) is None]
+    if unresolved:
+        needed = ", ".join(field_hints[k] for k in unresolved)
+        raise TicketableError(
+            f"Could not determine {needed} from your message. "
+            f"Please include these details and try again.",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
+
+    try:
+        return {
+            "project_id": int(parsed["project_id"]),
+            "description": str(parsed["description"]),
+            "severity": str(parsed["severity"]).lower(),
+            "employee_id": int(parsed["employee_id"]),
+        }
+    except (ValueError, TypeError) as exc:
+        raise TicketableError(
+            f"LLM incident decomposition field type error: {exc}",
+            context={"llm_response": response[:500], "parsed": parsed},
+        )
+
+
+def _llm_decompose_incident_with_retry(raw_request: str, max_retries: int = 2) -> Dict[str, Any]:
+    prompt = _build_incident_prompt(raw_request)
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = call_llm(prompt, temperature=0.2)
+            return _parse_incident_response(response)
+        except TicketableError as exc:
+            last_error = exc
+            if attempt < max_retries:
+                prompt += f"\n\nYour previous response was invalid: {exc}. Please fix and respond with ONLY valid JSON."
+                continue
+            raise last_error
+
+    raise last_error  # pragma: no cover
+
 
 def report_incident_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Intake: creates the SafetyIncidents record from the raw report."""
+    """Intake: creates the SafetyIncidents record from the raw report.
+
+    TASK DECOMPOSITION addition: accepts either a ready-made structured
+    dict under state["request"] (backward compatible with any existing
+    programmatic caller), OR a plain free-text string, which an LLM
+    call decomposes into the required fields -- mirrors
+    change_order/nodes.py's decompose_change_order_node and
+    equipment_recovery/nodes.py's report_breakdown, so a real user
+    typing a plain sentence in the chat UI works the same way across
+    all three state-graph agents.
+    """
     req = state.get("request")
     if not req:
         raise TicketableError(
@@ -160,18 +260,28 @@ def report_incident_node(state: Dict[str, Any]) -> Dict[str, Any]:
             context={"state_keys": list(state.keys())},
         )
 
+    if isinstance(req, dict) and all(k in req for k in _REQUIRED_INCIDENT_FIELDS):
+        structured = req
+    elif isinstance(req, str):
+        structured = _llm_decompose_incident_with_retry(req)
+    else:
+        raise TicketableError(
+            f"'request' must be a structured dict with {_REQUIRED_INCIDENT_FIELDS} "
+            f"or a free-text string to decompose, got {type(req).__name__}.",
+            context={"state_keys": list(state.keys())},
+        )
+
     incident_id = tools.create_incident(
         run_id=state.get("run_id", ""),
-        project_id=req["project_id"],
-        description=req["description"],
-        severity=req["severity"],
-        actor_id=req["employee_id"],
+        project_id=structured["project_id"],
+        description=structured["description"],
+        severity=structured["severity"],
+        actor_id=structured["employee_id"],
     )
     return {
         "incident_id": incident_id,
-        "employee_id": req["employee_id"],
+        "employee_id": structured["employee_id"],
     }
-
 
 def investigate_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """LATS addition (C3): searches over candidate root-cause /
