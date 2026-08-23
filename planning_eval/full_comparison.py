@@ -27,6 +27,7 @@ Keep the TEST_SUITE fixed once evaluation starts.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -129,27 +130,84 @@ def _est_cost_usd(tokens: int) -> float:
 
 _RATE_LIMIT_MARKERS = ("429", "rate limit", "ratelimiterror", "too many requests")
 
+# Groq's json_mode (with_structured_output(..., method="json_mode"), used by
+# ungrounded Reflexion's self-evaluation -- see reflexion.py) returns a 400
+# if the model exhausts its completion-token budget on reasoning before it
+# finishes writing the JSON object. That's an infra/prompt-budget problem,
+# not the model reaching a real verdict about the plan -- the environment
+# never even got a chance to score anything -- so like a rate limit, it's
+# tracked separately rather than blended into a method's real accuracy.
+_JSON_FAILURE_MARKERS = ("json_validate_failed", "failed to generate json", "failed to generate a valid")
+
+# gpt-oss models (served via Groq) carry a hidden "harmony" tool-call format
+# from their base training. Even with no tools bound and tool_choice="none"
+# sent explicitly, the model can still emit a tool-call-shaped completion
+# (observed: a hallucinated "container.exec" call). Groq's server validates
+# tool_choice server-side and rejects the response with a 400 when this
+# happens -- this is a decoding artifact of that specific call, not a signal
+# that the method's plan was bad, so it gets the same "don't blend into
+# accuracy" treatment as a rate limit or a truncated json_mode response.
+_TOOL_LEAK_MARKERS = ("tool choice is none, but model called a tool", "tool_use_failed")
+
+# Some Groq models/endpoints accept reasoning_effort at ChatGroq construction
+# time but reject it on the actual call ('reasoning_effort must be one of
+# none or default'). planning/model_provider.py's _ReasoningEffortFallbackChatModel
+# catches and retries this transparently mid-run, but a case can still
+# surface it once per process (the first call against a given model before
+# the fallback kicks in) -- an infra/config mismatch, not a signal about
+# the method's planning quality, so it gets the same "don't blend into
+# accuracy" treatment as a rate limit.
+_REASONING_EFFORT_MARKERS = ("reasoning_effort` must be one of", "reasoning_effort must be one of")
+
 
 def classify_error(error_str: str | None) -> str | None:
     """Returns None (success or a genuine no-exception failure), 'rate_limited',
+    'json_generation_failed', 'tool_generation_failed', 'reasoning_effort_rejected',
     or 'other_error', based on the exception text a run_* function captured."""
     if not error_str:
         return None
     lowered = error_str.lower()
     if any(marker in lowered for marker in _RATE_LIMIT_MARKERS):
         return "rate_limited"
+    if any(marker in lowered for marker in _JSON_FAILURE_MARKERS):
+        return "json_generation_failed"
+    if any(marker in lowered for marker in _TOOL_LEAK_MARKERS):
+        return "tool_generation_failed"
+    if any(marker in lowered for marker in _REASONING_EFFORT_MARKERS):
+        return "reasoning_effort_rejected"
     return "other_error"
 
 
-def _call_with_retry(fn, *args, max_retries: int = 4, base_delay: float = 20.0) -> dict:
+def _call_with_retry(fn, *args, max_retries: int = 4, base_delay: float = 20.0,
+                      json_max_retries: int = 2, json_retry_delay: float = 5.0) -> dict:
     """Calls fn(*args) -- one of the run_* functions below, each of which
     already catches its own exceptions and returns a result dict rather
-    than raising. If the result looks rate-limited, retries with
-    exponential backoff (20s, 40s, 80s, 160s) before giving up, since a
-    real rate limit is transient and often succeeds on the next try.
-    Anything that isn't rate-limit-shaped (a genuine grounded failure, or
-    some other error) is returned immediately -- retrying those would
-    just waste quota on a problem retrying can't fix."""
+    than raising.
+
+    Three distinct retryable classes, three distinct strategies:
+      - rate_limited: a real quota limit is transient on a MINUTES scale,
+        so exponential backoff (20s, 40s, 80s, 160s) before giving up.
+      - json_generation_failed: the model ran out of completion-token
+        budget on reasoning before finishing valid json_mode output (see
+        classify_error()). Waiting longer doesn't help -- it's not a
+        quota problem -- but the model's own verbosity is stochastic
+        (temperature > 0), so a short flat delay and a couple of retries
+        gives it another roll of the dice at a DIFFERENT generation
+        before giving up.
+      - tool_generation_failed: the model hallucinated a tool call despite
+        tool_choice="none" (see classify_error()). Same rationale as
+        json_generation_failed -- a decoding-time artifact, not a quota
+        problem -- so the same short-flat-delay retry applies.
+      - reasoning_effort_rejected: Groq rejected the reasoning_effort value
+        on this call (see classify_error()). model_provider.py's
+        _ReasoningEffortFallbackChatModel already switches to a plain
+        client without reasoning_effort the FIRST time this happens and
+        keeps using it -- so a retry here just re-issues the call against
+        that now-fixed client. Same short-flat-delay treatment.
+
+    Anything else (a genuine grounded failure, or a truly unrecognized
+    error) is returned immediately -- retrying those would just waste
+    quota on a problem retrying can't fix."""
     result = fn(*args)
     attempt = 0
     while classify_error(result.get("error")) == "rate_limited" and attempt < max_retries:
@@ -159,8 +217,37 @@ def _call_with_retry(fn, *args, max_retries: int = 4, base_delay: float = 20.0) 
         time.sleep(delay)
         result = fn(*args)
         attempt += 1
+
+    json_attempt = 0
+    while (classify_error(result.get("error")) == "json_generation_failed"
+           and json_attempt < json_max_retries):
+        print(f"        ↳ model truncated before valid json, retrying in "
+              f"{json_retry_delay:.0f}s (attempt {json_attempt + 1}/{json_max_retries})...")
+        time.sleep(json_retry_delay)
+        result = fn(*args)
+        json_attempt += 1
+
+    tool_attempt = 0
+    while (classify_error(result.get("error")) == "tool_generation_failed"
+           and tool_attempt < json_max_retries):
+        print(f"        ↳ model hallucinated a tool call, retrying in "
+              f"{json_retry_delay:.0f}s (attempt {tool_attempt + 1}/{json_max_retries})...")
+        time.sleep(json_retry_delay)
+        result = fn(*args)
+        tool_attempt += 1
+
+    reasoning_attempt = 0
+    while (classify_error(result.get("error")) == "reasoning_effort_rejected"
+           and reasoning_attempt < json_max_retries):
+        print(f"        ↳ reasoning_effort rejected by Groq, retrying in "
+              f"{json_retry_delay:.0f}s now that the client has fallen back "
+              f"(attempt {reasoning_attempt + 1}/{json_max_retries})...")
+        time.sleep(json_retry_delay)
+        result = fn(*args)
+        reasoning_attempt += 1
+
     result["error_type"] = classify_error(result.get("error"))
-    result["retries"] = attempt
+    result["retries"] = attempt + json_attempt + tool_attempt + reasoning_attempt
     return result
 
 
@@ -317,7 +404,24 @@ def run_tot(case: dict, llm, env) -> dict:
                 "latency": round(time.time() - t0, 3),
                 "cost": _est_cost_usd(counter.approx_tokens),
             }
-        fb = env.evaluate(best.state)
+        # BUGFIX: used to be env.evaluate(best.state) alone. best.state is
+        # just the winning beam-search candidate's short "continuation"
+        # text (e.g. "coordinate overtime crews to compress the
+        # resequenced trades") -- tree_of_thoughts()'s candidate-generation
+        # prompt never instructs the model to restate the ProjectID in
+        # each candidate the way self_refine's draft prompt does (which
+        # passes the goal directly and asks for a full proposal).
+        # IronBridgeEnvironment._grounded_checks() hard-zeros (score=0.0,
+        # not partial credit) any text with no ProjectID match -- so this
+        # was guaranteeing a 0.0 on every case regardless of the actual
+        # plan quality, since the ProjectID lives in `case["request"]`
+        # (the root problem statement) but never in `best.state` itself.
+        # Evaluate the winning candidate together with the problem
+        # statement it's a continuation of, so grounding checks that key
+        # off ProjectID/budget/stock see the full context a real plan
+        # would have, not just the leaf snippet.
+        graded_text = f"{case['request']}\n\n{best.state}"
+        fb = env.evaluate(graded_text)
         return {
             "method": "Tree-of-Thoughts",
             "success": fb.success,
@@ -437,7 +541,24 @@ def run_reflexion(case: dict, llm, env, label: str, judge_llm=None) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
+def _parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Load artifacts/full_comparison_table.partial.json and skip any "
+             "(case, method) cell that already has a clean result. Cells whose "
+             "only recorded attempt was rate-limited, json-truncated, hit a "
+             "tool-call-leak, or hit a reasoning_effort rejection (see "
+             "classify_error()) are NOT skipped -- that attempt is discarded "
+             "and the cell is re-run from scratch, so a polluted entry never "
+             "survives into the final table.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
     from dotenv import load_dotenv
     import os
     load_dotenv(ROOT_DIR / ".env") 
@@ -462,9 +583,16 @@ def main() -> None:
     judge_model_name = os.environ.get("JUDGE_GROQ_MODEL")
     judge_llm = None
     if judge_model_name and has_real_llm():
-        from langchain_groq import ChatGroq
-        judge_llm = ChatGroq(
-            model=judge_model_name, api_key=os.environ["GROQ_API_KEY"], temperature=0.0,
+        from planning.model_provider import _build_chat_groq
+        # Same fix as planning/model_provider.py's get_planning_llm() --
+        # keep the judge's json_mode call from exhausting its budget on
+        # hidden reasoning before it writes the EnvironmentFeedback json.
+        # Shared helper so both call sites tolerate whichever
+        # langchain-groq version is actually installed.
+        judge_llm = _build_chat_groq(
+            model_name=judge_model_name,
+            temperature=0.0,
+            max_tokens=int(os.environ.get("GROQ_MAX_TOKENS", "4096")),
         )
         print(f"[Judge] Using independent judge model for ungrounded Reflexion: {judge_model_name}")
     else:
@@ -475,6 +603,99 @@ def main() -> None:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     all_results = []
+    already_clean: set[tuple[str, str]] = set()  # (case_id, method) pairs to SKIP re-running
+
+    if args.resume:
+        partial_path = artifacts_dir / "full_comparison_table.partial.json"
+        if not partial_path.exists():
+            print(f"[resume] no partial file at {partial_path} -- starting a full fresh run instead.")
+        else:
+            with open(partial_path, "r", encoding="utf-8") as f:
+                prior = json.load(f).get("results", [])
+
+            # Positional fallback for partial files captured before case_id
+            # was added to each result -- same len(METHODS)-per-case logic
+            # finalize_partial.py uses, kept here rather than imported so
+            # this script has no dependency on that one.
+            method_order = [
+                "Decomposition-first", "Dynamic", "Plan-and-Solve", "Tree-of-Thoughts",
+                "LATS (Grounded)", "LATS (Ungrounded)", "Self-Refine (Grounded)",
+                "Self-Refine (Ungrounded)", "Reflexion (Grounded)", "Reflexion (Ungrounded)",
+            ]
+            case_order = [c["id"] for c in TEST_SUITE]
+
+            def _infer_case_id(idx: int) -> str:
+                case_idx = idx // len(method_order)
+                return case_order[case_idx] if case_idx < len(case_order) else f"UNKNOWN_CASE_{case_idx}"
+
+            # Keep only the LATEST result per (case_id, method) -- if a
+            # prior --resume attempt already replaced a rate-limited entry
+            # with a clean one, the clean one is what should win.
+            latest: dict[tuple[str, str], dict] = {}
+            for idx, r in enumerate(prior):
+                cid = r.get("case_id") or _infer_case_id(idx)
+                latest[(cid, r["method"])] = r
+
+            discarded_polluted = 0
+            for (cid, method), r in latest.items():
+                # Reclassify from the raw error text with the CURRENT
+                # classify_error(), rather than trusting whatever
+                # error_type is already stored on the cell. A partial
+                # file can be carried across code changes (new marker
+                # sets, like reasoning_effort_rejected added here), and
+                # a stale error_type would otherwise let an already-fixed
+                # bug's polluted cell slip through as "clean".
+                r["error_type"] = classify_error(r.get("error"))
+                if r.get("error_type") in (
+                    "rate_limited", "json_generation_failed", "tool_generation_failed", "reasoning_effort_rejected",
+                ):
+                    # Polluted -- do NOT carry forward. Not adding to
+                    # already_clean means the main loop below will re-run
+                    # this exact cell from scratch.
+                    discarded_polluted += 1
+                    continue
+                r["case_id"] = cid  # backfill for older partial files
+                all_results.append(r)
+                already_clean.add((cid, method))
+
+            print(f"[resume] loaded {len(already_clean)} clean cell(s) from {partial_path.name} "
+                  f"-- will be skipped.")
+            print(f"[resume] discarded {discarded_polluted} rate-limited/json-truncated/tool-leak/"
+                  f"reasoning-effort-rejected cell(s) -- will be re-run fresh, not carried forward.")
+            # Re-save immediately so a crash before the first new call still
+            # leaves a partial file with the polluted entries already gone.
+            with open(partial_path.with_suffix(".tmp"), "w", encoding="utf-8") as f:
+                json.dump({
+                    "status": "in_progress",
+                    "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "completed_calls": len(all_results),
+                    "results": all_results,
+                }, f, indent=2)
+            os.replace(partial_path.with_suffix(".tmp"), partial_path)
+
+    def _save_partial() -> None:
+        """Best-effort incremental save. A full run can take hours once
+        rate-limit backoff kicks in (up to 300s PER call across 4
+        retries), and the original code only wrote
+        full_comparison_table.json once, at the very end of main() --
+        meaning a crash anywhere in a multi-hour run (PC reboot, OOM,
+        a killed process) lost every result computed up to that point,
+        not just the one call in flight. This writes after every
+        single call instead. Atomic (temp file + os.replace) so a
+        crash mid-write can't corrupt the partial file itself."""
+        partial_path = artifacts_dir / "full_comparison_table.partial.json"
+        tmp_path = partial_path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "status": "in_progress",
+                    "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "completed_calls": len(all_results),
+                    "results": all_results,
+                }, f, indent=2)
+            os.replace(tmp_path, partial_path)
+        except Exception as e:
+            print(f"        \u21b3 WARNING: partial save failed (continuing anyway): {e}")
 
     print("\n" + "=" * 86)
     print("FULL UNIFIED COMPARISON: All Methods vs. All Cases")
@@ -489,16 +710,29 @@ def main() -> None:
     INTER_CALL_DELAY_SECONDS = 3
     INTER_CASE_DELAY_SECONDS = 10
 
-    def _run_and_report(label: str, fn, *args) -> dict:
+    def _run_and_report(label: str, method_name: str, fn, *args) -> dict | None:
+        if (case["id"], method_name) in already_clean:
+            print(f"  {label}| SKIP (resume) -- already have a clean result for this cell")
+            return None
         r = _call_with_retry(fn, *args)
+        r["case_id"] = case["id"]
         all_results.append(r)
+        _save_partial()
         tag = ""
         if r.get("error_type") == "rate_limited":
             tag = f" [RATE-LIMITED after {r.get('retries', 0)} retries -- excluded from accuracy]"
+        elif r.get("error_type") == "json_generation_failed":
+            tag = f" [JSON-TRUNCATED after {r.get('retries', 0)} retries -- excluded from accuracy]"
+        elif r.get("error_type") == "tool_generation_failed":
+            tag = f" [TOOL-CALL-LEAK after {r.get('retries', 0)} retries -- excluded from accuracy]"
+        elif r.get("error_type") == "reasoning_effort_rejected":
+            tag = f" [REASONING-EFFORT-REJECTED after {r.get('retries', 0)} retries -- excluded from accuracy]"
         elif r.get("self_graded"):
             tag = " [self-graded]"
         print(f"  {label}| {'PASS' if r['success'] else 'FAIL'} | Score {r['score']:.2f} | Calls {r['llm_calls']:<2} | ${r['cost']:.4f} | {r['latency']}s{tag}")
-        if not r["success"] and r.get("error") and r.get("error_type") != "rate_limited":
+        if not r["success"] and r.get("error") and r.get("error_type") not in (
+            "rate_limited", "json_generation_failed", "tool_generation_failed", "reasoning_effort_rejected",
+        ):
             print(f"        ↳ error: {r['error']}")
         time.sleep(INTER_CALL_DELAY_SECONDS)
         return r
@@ -507,20 +741,20 @@ def main() -> None:
         print(f"\n[{case['id']}] {case['request'][:80]}...")
 
         # Decomposition
-        _run_and_report("DF  ", run_decomposition_first, case, llm, grounded_env)
-        _run_and_report("Dyn ", run_dynamic, case, llm, grounded_env)
+        _run_and_report("DF  ", "Decomposition-first", run_decomposition_first, case, llm, grounded_env)
+        _run_and_report("Dyn ", "Dynamic", run_dynamic, case, llm, grounded_env)
 
         # Planning algorithms
-        _run_and_report("PS  ", run_ps, case, llm, grounded_env)
-        _run_and_report("ToT ", run_tot, case, llm, grounded_env)
-        _run_and_report("L-G ", run_lats, case, llm, grounded_env, "Grounded")
-        _run_and_report("L-U ", run_lats, case, llm, ungrounded_env, "Ungrounded")
+        _run_and_report("PS  ", "Plan-and-Solve", run_ps, case, llm, grounded_env)
+        _run_and_report("ToT ", "Tree-of-Thoughts", run_tot, case, llm, grounded_env)
+        _run_and_report("L-G ", "LATS (Grounded)", run_lats, case, llm, grounded_env, "Grounded")
+        _run_and_report("L-U ", "LATS (Ungrounded)", run_lats, case, llm, ungrounded_env, "Ungrounded")
 
         # Self-correction
-        _run_and_report("SR-G", run_self_refine, case, llm, grounded_env, "Grounded")
-        _run_and_report("SR-U", run_self_refine, case, llm, grounded_env, "Ungrounded")
-        _run_and_report("Ref-G", run_reflexion, case, llm, grounded_env, "Grounded")
-        _run_and_report("Ref-U", run_reflexion, case, llm, grounded_env, "Ungrounded", judge_llm)
+        _run_and_report("SR-G", "Self-Refine (Grounded)", run_self_refine, case, llm, grounded_env, "Grounded")
+        _run_and_report("SR-U", "Self-Refine (Ungrounded)", run_self_refine, case, llm, grounded_env, "Ungrounded")
+        _run_and_report("Ref-G", "Reflexion (Grounded)", run_reflexion, case, llm, grounded_env, "Grounded")
+        _run_and_report("Ref-U", "Reflexion (Ungrounded)", run_reflexion, case, llm, grounded_env, "Ungrounded", judge_llm)
 
         # Rate limit protection: longer sleep between cases on top of the
         # per-call delay above
@@ -541,12 +775,19 @@ def main() -> None:
         runs = [r for r in all_results if r["method"] == method]
         total = len(runs)
 
-        # Rate-limited runs are infra noise, not a signal about the method
-        # -- excluded from success_rate / accuracy_pct / avg_score so a
-        # throttled API call can't drag a method's reported quality down.
-        # Still counted and shown separately so nothing is silently hidden.
+        # Rate-limited runs, and runs where the model truncated before
+        # producing valid json_mode output, are infra/prompt-budget noise,
+        # not a signal about the method's planning quality -- both
+        # excluded from success_rate / accuracy_pct / avg_score so neither
+        # can drag a method's reported quality down. Still counted and
+        # shown separately so nothing is silently hidden.
         rate_limited_runs = [r for r in runs if r.get("error_type") == "rate_limited"]
-        scored_runs = [r for r in runs if r.get("error_type") != "rate_limited"]
+        json_failed_runs = [r for r in runs if r.get("error_type") == "json_generation_failed"]
+        tool_failed_runs = [r for r in runs if r.get("error_type") == "tool_generation_failed"]
+        reasoning_effort_runs = [r for r in runs if r.get("error_type") == "reasoning_effort_rejected"]
+        scored_runs = [r for r in runs if r.get("error_type") not in (
+            "rate_limited", "json_generation_failed", "tool_generation_failed", "reasoning_effort_rejected",
+        )]
         scored_total = len(scored_runs)
 
         successes = sum(1 for r in scored_runs if r["success"])
@@ -567,6 +808,9 @@ def main() -> None:
             "avg_latency_sec": avg_latency,
             "total_est_cost_usd": total_cost,
             "rate_limited_excluded": len(rate_limited_runs),
+            "json_generation_failed_excluded": len(json_failed_runs),
+            "tool_generation_failed_excluded": len(tool_failed_runs),
+            "reasoning_effort_rejected_excluded": len(reasoning_effort_runs),
             "self_graded": self_graded,
         })
 
@@ -635,6 +879,10 @@ Top-level reshuffle     → Dynamic Decomposition → When mid-plan surprises (c
             "cases": all_results,
         }, f, indent=2)
     print(f"\n[Artifact Saved] {output_path}")
+
+    partial_path = artifacts_dir / "full_comparison_table.partial.json"
+    if partial_path.exists():
+        partial_path.unlink()  # run finished cleanly -- the partial snapshot is redundant now
 
 
 if __name__ == "__main__":
