@@ -1,0 +1,12 @@
+.git
+.gitignore
+__pycache__/
+**/__pycache__/
+*.pyc
+venv/
+.venv/
+.env
+memory/memory_store.db
+rag/qdrant_data/
+rag/qdrant_data_v3/
+artifacts/

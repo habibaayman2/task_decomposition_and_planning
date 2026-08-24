@@ -1,0 +1,26 @@
+services:
+  ironbridge-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ironbridge-platform:latest
+    container_name: ironbridge-platform
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      IRONBRIDGE_DB_PATH: /app/db/procurement.db
+      IRONBRIDGE_DB_ENGINE: sqlite
+    volumes:
+      # Keep the SQLite DB (chat threads, HITL tasks, tickets, procurement
+      # data, etc.) on the host so it survives container rebuilds.
+      - ironbridge-db:/app/db
+      # Keep the local on-disk Qdrant vector store (RAG index) so documents
+      # don't need to be re-embedded every restart.
+      - ironbridge-qdrant:/app/rag/qdrant_data
+    restart: unless-stopped
+
+volumes:
+  ironbridge-db:
+  ironbridge-qdrant:
