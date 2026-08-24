@@ -7,7 +7,6 @@
 > the Planning Lab material is folded into [Lab Corrections](#lab-corrections-consolidated)
 > and [Master Comparison Table](#master-comparison-table-planning-lab) rather than removed.
 
-**Repo:** `habibaayman2/task_decomposition_and_planning` · **Branch:** `ironbridge-planning`
 
 | Person | State graph owned | LLM additions | System slice owned |
 |---|---|---|---|
@@ -254,14 +253,6 @@ platform caller doesn't need per-graph special-casing.
 
 ---
 
-## Known Issues
-
-- **`equipment_recovery/nodes.py`'s `approval_gate` HITL re-open bug** — see Cross-Review above.
-- **`ib_platform/README.md` is empty.** The admin backend has its own thorough doc at
-  `ib_platform/backend/routes/README.md`; the top-level platform README should at minimum link
-  to it and to the user-side routes, so a grader lands somewhere real from `ib_platform/`.
-
----
 
 ## Presentation Split (10 min, all three present)
 
