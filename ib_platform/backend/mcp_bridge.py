@@ -34,6 +34,7 @@ from pathlib import Path
 import sys
 import warnings
 from typing import Optional
+from mcp_server.db import get_conn, hash_pin 
 
 # --------------------------------------------------------------------------
 # Path resolution
@@ -72,36 +73,34 @@ def _get_visible_tools(all_tools: list[str], agent_id: Optional[str] = None) -> 
 # --------------------------------------------------------------------------
 
 def _ensure_default_employee(employee_id: int, pin: str) -> None:
-    """Inserts the employee into the shared DB if missing, so
-    authenticate_as_approver() always succeeds during demo/development.
-
-    In production this should be replaced with proper user provisioning,
-    but for the course project it guarantees the admin panel works
-    out-of-the-box after `python -m db.migrate`.
-    """
     try:
-        conn = get_conn()
-        existing = conn.execute(
-            "SELECT 1 FROM Employees WHERE employee_id = ?",
-            (employee_id,),
-        ).fetchone()
-        if existing is None:
-            conn.execute(
-                "INSERT INTO Employees (employee_id, pin, name, role) VALUES (?, ?, ?, ?)",
-                (employee_id, pin, f"Admin {employee_id}", "approver"),
-            )
-            conn.commit()
-            print(f"[mcp_bridge] Seeded default employee {employee_id} into DB.")
+        with get_conn() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM Employees WHERE EmployeeID = ?",
+                (employee_id,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO Employees (EmployeeID, PinHash, Name, Role) VALUES (?, ?, ?, ?)",
+                    (employee_id, hash_pin(pin), f"Admin {employee_id}", "approver"),
+                )
+                conn.commit()
+                print(f"[mcp_bridge] Seeded default employee {employee_id} into DB.")
+            else:
+                # FIX: seed.sql sets PinHash=NULL for employee 1 — fix it here
+                conn.execute(
+                    "UPDATE Employees SET PinHash = ? WHERE EmployeeID = ? AND PinHash IS NULL",
+                    (hash_pin(pin), employee_id),
+                )
+                if conn.total_changes > 0:
+                    conn.commit()
+                    print(f"[mcp_bridge] Updated PinHash for employee {employee_id}.")
     except Exception as e:
-        # If the table doesn't exist yet, migrations haven't run.
-        # Surface a clear warning instead of a cryptic failure later.
         warnings.warn(
             f"[mcp_bridge] Could not seed employee {employee_id}: {e}. "
-            "Run `python -m db.migrate` first.",
+            "Run `python db\\build_db.py` first.",
             stacklevel=3,
         )
-
-
 # --------------------------------------------------------------------------
 # Connection & auth helpers
 # --------------------------------------------------------------------------

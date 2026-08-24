@@ -19,8 +19,19 @@
       "chunk_count": 1,
       "indexed_at": "2026-08-21T15:48:09.429534Z",
       "file_size": 191
+    },
+    "315498e025dd1c9e": {
+      "filename": "RAG_DOCUMENTATION.md",
+      "title": "rag scenario",
+      "chunks": [
+        "# Excavator Maintenance & Safety Policy (IronBridge Policy #3)\n\n## Daily Pre-Operation Checks\n- Inspect hydraulic fluid levels\n- Check track tension and undercarriage\n- Verify bucket teeth condition\n- Test all control levers and emergency stop\n\n## Common Failure Symptoms\n- **Engine won't start**: Check battery, fuel filter, glow plugs\n- **Hydraulic arm slow**: Low hydraulic fluid or clogged filter\n- **Overheating**: Clean radiator, check coolant level",
+        "verheating**: Clean radiator, check coolant level\n- **Track slipping**: Adjust track tension, inspect drive sprocket\n\n## Repair vs Replace Guidelines\n- If repair cost &lt; 40% of equipment value \u2192 **Repair**\n- If downtime &gt; 5 days \u2192 Consider **Replacement**\n- Always check remaining project budget before major repairs\n\n## Safety Requirements\n- Lock-out/tag-out before any maintenance\n- Only certified technicians perform engine repairs\n- Document all repairs in equipment log"
+      ],
+      "chunk_count": 2,
+      "indexed_at": "2026-08-23T20:08:14.680261Z",
+      "file_size": 911
     }
   },
-  "version": 3,
-  "last_updated": "2026-08-21T15:48:09.429534Z"
+  "version": 10,
+  "last_updated": "2026-08-23T20:08:14.680808Z"
 }

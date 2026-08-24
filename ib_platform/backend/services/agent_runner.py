@@ -30,8 +30,6 @@ from mcp_server.db import get_conn
 _state_graph_agents: Dict[str, Any] = {}
 _legacy_agents: Dict[str, Any] = {}
 
-# Static fallback roster — always returned even if dynamic imports fail,
-# so the admin/user frontends never appear empty.
 STATIC_AGENT_ROSTER = [
     {"name": "change_order", "type": "state_graph", "description": "Change Order Approval & Appeal", "status": "available"},
     {"name": "equipment_recovery", "type": "state_graph", "description": "Equipment Breakdown Recovery", "status": "available"},
@@ -74,11 +72,11 @@ def _run_planning_agent_wrapper(message: str) -> str:
     spec = importlib.util.spec_from_file_location("planning_agent_direct", str(file_path))
     mod = importlib.util.module_from_spec(spec)
     
-    # Prevent the module from trying to import 'agent' as a package
     sys.modules["planning_agent_direct"] = mod
     spec.loader.exec_module(mod)
     
     return asyncio.run(mod.run_planning_agent(message))
+
 def _load_legacy_agents():
     global _legacy_agents
     if _legacy_agents:
@@ -91,18 +89,13 @@ def _load_legacy_agents():
 
 
 def _load_legacy_module(name: str, file_path: Path, attr: str) -> None:
-    """Load a single legacy agent module directly from its file path."""
     if not file_path.exists():
         print(f"[agent_runner] {name} not loaded: {file_path} not found")
         return
     try:
-        # Use a unique module name to avoid collisions with anything already
-        # on sys.path (e.g. an 'agent' directory without __init__.py).
         module_name = f"_agent_runner_legacy_{name}"
         spec = importlib.util.spec_from_file_location(module_name, str(file_path))
         mod = importlib.util.module_from_spec(spec)
-        # exec_module runs the file's top-level code (including its own
-        # sys.path manipulation), so all its repo-local imports resolve.
         spec.loader.exec_module(mod)
         _legacy_agents[name] = getattr(mod, attr)
     except Exception as e:
@@ -110,8 +103,6 @@ def _load_legacy_module(name: str, file_path: Path, attr: str) -> None:
 
 
 def list_available_agents() -> List[Dict[str, Any]]:
-    """Returns dynamically loaded agents, falling back to static roster
-    if nothing could be imported (so the UI never appears empty)."""
     dynamic = []
     for name in _load_state_graph_agents().keys():
         dynamic.append({
@@ -128,7 +119,6 @@ def list_available_agents() -> List[Dict[str, Any]]:
             "status": "available"
         })
 
-    # If dynamic loading failed entirely, return static roster so frontends work
     if not dynamic:
         return [dict(a) for a in STATIC_AGENT_ROSTER]
     return dynamic
@@ -183,9 +173,6 @@ def run_legacy_agent(agent_name: str, message: str) -> Tuple[str, str]:
     if runner is None:
         return "error", f"Agent '{agent_name}' is not available."
     try:
-        # The planning agent is async (run_planning_agent).
-        # The memory_rag agent is the full interactive CLI loop (run_agent);
-        # it cannot be called with a single message string.
         if asyncio.iscoroutinefunction(runner):
             response = asyncio.run(runner(message))
             return "completed", str(response)

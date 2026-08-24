@@ -401,12 +401,11 @@ def handle_officer_decision_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "handle_officer_decision_node reached with no resolved HITL decision.",
             context={"incident_id": incident_id},
         )
-
-    if decision == "needs_more_investigation":
+    if decision in ("needs_more_investigation",):
         tools.bump_investigation_round(incident_id, actor_id)
-    elif decision == "regulator_report_required":
+    elif decision in ("regulator_report_required", "approved", "approve", "accept"):
         tools.mark_regulator_report_required(incident_id, actor_id)
-    elif decision == "closed_no_report":
+    elif decision in ("closed_no_report", "rejected", "reject", "close", "closed"):
         tools.close(incident_id, actor_id)
     else:
         raise TicketableError(

@@ -93,7 +93,6 @@ except Exception as e:
 # does not prevent the other from mounting
 # ---------------------------------------------------------------------------
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
-frontend_fixed_dir = Path(__file__).resolve().parent.parent / "frontend_fixed"
 
 if frontend_dir.exists():
     admin_dir = frontend_dir / "admin"
@@ -114,12 +113,6 @@ if frontend_dir.exists():
 else:
     print(f"[WARNING] Frontend directory not found at {frontend_dir}")
 
-if frontend_fixed_dir.exists():
-    fixed_user_dir = frontend_fixed_dir / "user"
-    if fixed_user_dir.exists():
-        app.mount("/user_fixed", StaticFiles(directory=str(fixed_user_dir), html=True), name="user_fixed")
-        print(f"[StaticFiles] /user_fixed -> {fixed_user_dir}")
-
 # ---------------------------------------------------------------------------
 # Health check — useful for verifying which routes loaded
 # ---------------------------------------------------------------------------
@@ -136,6 +129,17 @@ def health_check():
             "user": "/user/index.html" if (frontend_dir / "user").exists() else None,
         },
     }
+
+# ---------------------------------------------------------------------------
+# Root landing page (frontend/index.html + shared_config.js) -- mounted
+# LAST, after every API router and the /admin and /user sub-mounts above,
+# so this catch-all StaticFiles mount can never shadow anything more
+# specific. Starlette matches routes in registration order; a mount at "/"
+# only ever handles requests nothing earlier already claimed.
+# ---------------------------------------------------------------------------
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="root")
+    print(f"[StaticFiles] /      -> {frontend_dir}")
 
 if __name__ == "__main__":
     import uvicorn
