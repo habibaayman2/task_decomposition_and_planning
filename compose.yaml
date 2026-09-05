@@ -12,6 +12,7 @@ services:
     environment:
       IRONBRIDGE_DB_PATH: /app/db/procurement.db
       IRONBRIDGE_DB_ENGINE: sqlite
+      IRONBRIDGE_MCP_URL: http://localhost:8080/mcp
     volumes:
       # Keep the SQLite DB (chat threads, HITL tasks, tickets, procurement
       # data, etc.) on the host so it survives container rebuilds.
