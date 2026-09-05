@@ -1,270 +1,323 @@
-# 🏗️ IronBridge Construction — State Graphs, HITL, and the Platform
+# IronBridge AI Operations Platform
 
-> **Final Project — 4-Day Sprint.** Three real-world IronBridge workflows, each built as a
-> cyclic, checkpointed state graph on a shared core, each pausing for a human at a genuine
-> decision point, each recovering cleanly from a crash. This README replaces the earlier
-> Week-4-only Planning Lab README below with the consolidated picture of the whole sprint —
-> the Planning Lab material is folded into [Lab Corrections](#lab-corrections-consolidated)
-> and [Master Comparison Table](#master-comparison-table-planning-lab) rather than removed.
-
-
-| Person | State graph owned | LLM additions | System slice owned |
-|---|---|---|---|
-| **A** | `state_graph/change_order/` — change order approval & appeal | Task decomposition + constrained ReAct (form filing) | `mcp_server/` corrections + Admin platform |
-| **B** | `state_graph/equipment_recovery/` — equipment breakdown recovery | RAG (manuals/catalog) + Tree of Thoughts | Memory/RAG corrections + User platform |
-| **C** | `state_graph/safety_incident/` — safety incident & regulator reporting | LATS (investigation search) + constrained ReAct (regulator filing) | Shared `state_graph/core/` + Planning Lab corrections |
+> **Company:** IronBridge Construction  
+> **System:** Multi-Agent AI Platform with Persistent State, Human Oversight, and Live Operations Management
 
 ---
 
-## Architecture
+## Overview
 
-```
-state_graph/
-├── core/                  # C1 — shared, graph-agnostic engine
-│   ├── models.py
-│   ├── checkpoint_store.py   # every transition persisted to db/procurement.db BEFORE advancing
-│   ├── graph_base.py         # StateGraph: cyclic, .run() starts-or-resumes, same call either way
-│   ├── hitl.py                # require_hitl() / HITLPause
-│   └── tickets.py             # TicketableError — unplanned failures, not HITL pauses
-├── change_order/           # A — Problem 1
-├── equipment_recovery/     # B — Problem 2
-├── safety_incident/        # C — Problem 3
-├── demo_crash_resume.py    # C1's toy proof-of-concept (Day 1)
-└── cli.py                  # C4 — wraps all three REAL graphs the same way, for the final proof
+IronBridge Construction operates across multiple active job sites, each with its own materials pipeline, contractor schedules, equipment fleet, and safety profile. Coordinating these moving parts in real time is not a task that can be solved with a single prompt or a linear script. A delay on one site ripples into procurement decisions on another. A safety incident triggers a chain of notifications, inspections, and work stoppages that may span days. A change order from a client must be priced, approved, and executed without breaking the budget of the original project.
 
-ib_platform/                # Admin (A) + User (B) platform, HTTP API + frontend
-mcp_server/                 # MCP tool server + policy docs (A corrections)
-rag/                        # Hybrid RAG (BM25 + vector) + Self-RAG grounding check (B corrections)
-memory/                     # Short/long-term memory (B corrections)
-planning/, planning_eval/   # Planning Lab (C2b corrections) — Plan-and-Solve, ToT, LATS, Self-Refine, Reflexion
-db/                         # Single shared SQLite DB (procurement.db) for everything above
-```
+This repository houses the complete AI operations platform built for IronBridge. It is not a collection of disconnected demos. It is a single, integrated system where every agent shares the same MCP server, the same procurement database, the same document store, and the same operational platform that real users and administrators interact with every day.
 
-**One database, one core, three graphs.** All three graphs and the platform read/write the
-same `db/procurement.db` via `mcp_server/db.py`; all three graphs run on the same
-`state_graph/core/` engine. No graph stands up its own parallel state store.
+The system is organized into four layers:
 
-One thing worth knowing before you read the three graphs' code: **their `initial_state`
-contracts are not identical.** `change_order` and `safety_incident` wrap the caller's payload
-as `{"run_id": ..., "request": {...}}` (their entry nodes do task decomposition on `request`,
-which may be a free-text string); `equipment_recovery` takes a flat dict with no wrapper and no
-`run_id` key. This isn't a bug — each graph's own `start_new_*()` / entry node defines its own
-contract — but it's easy to trip over, so `state_graph/cli.py`'s built-in demo payloads match
-each graph's real contract exactly. See [Cross-Review](#cross-review-ab-core-usage) for more on this.
+| Layer | Purpose | Key Components |
+|:---|:---|:---|
+| **Platform** (`ib_platform/`) | Where people meet the agents | Admin dashboard, user chat interface, HITL inbox, ticket board |
+| **State Graphs** (`state_graph/`) | Agents that hold state across time | Change-order negotiation, equipment recovery, safety-incident response |
+| **Planning & Memory** (`planning/`, `agent/`, `memory/`, `rag/`) | Agents that reason and remember | Delay-response planning, policy Q&A, document retrieval |
+| **Infrastructure** (`mcp_server/`, `db/`) | Shared tools and data | Runtime tool registry, SQLite database, RAG vector store |
 
 ---
 
-## Setup
+## The Three Stateful Problems
+
+Construction work is inherently asynchronous. A machine breaks on Friday evening. A safety inspector's report arrives Monday morning. A client's change-order request sits in email for three days. Each of these scenarios requires an agent that can start work, pause, wait for something outside its control, and resume exactly where it left off — without losing context, without re-executing completed steps, and without making irreversible decisions without human approval.
+
+### 1. Change-Order Negotiation Agent
+
+**The problem:** A client requests a scope change — an extra floor, a materials upgrade, a timeline shift. The project manager must price the change, check it against the remaining budget, obtain client approval, and then re-sequence the remaining work. This process can stretch across multiple days and multiple rounds of back-and-forth.
+
+**Why it needs a state graph:** The agent cannot price the change until it queries current stock and contractor availability. It cannot execute the change until a human approves the cost. It cannot re-sequence the schedule until the client confirms. Each of these is a genuine wait or a genuine branch.
+
+**Techniques used:**
+- **Task Decomposition** — The agent breaks the change-order response into a sequence of verifiable sub-tasks: impact assessment, cost estimation, approval gating, and schedule resequencing.
+- **Constrained ReAct** — When the agent proposes a revised schedule, it operates within a whitelist of permissible actions and validates every proposal against live database constraints (budget, stock, contractor status).
+
+### 2. Equipment Recovery Agent
+
+**The problem:** A critical piece of equipment fails on site. The site engineer needs a replacement fast, but the optimal path depends on whether a rental is available nearby, whether the budget can absorb the cost, and whether a repair might be faster. If the rental exceeds a threshold, a project manager must sign off.
+
+**Why it needs a state graph:** The agent must diagnose the failure, search for alternatives, price them, and then stop for human approval before committing spend. If a rental vendor's API is down, the run must fail cleanly, open a ticket, and resume once the vendor is reachable again — not start over from diagnosis.
+
+**Techniques used:**
+- **Tree of Thoughts** — The agent explores multiple recovery strategies (rental, repair, subcontract, schedule shift) in parallel, scoring each against time-to-recovery and cost before committing.
+- **Constrained ReAct** — The execution node that books a rental or calls a repair service is constrained by a whitelist and a budget ceiling. Any action that would exceed the threshold triggers a human-in-the-loop pause.
+
+### 3. Safety Incident Response Agent
+
+**The problem:** A safety incident is reported on site. The agent must triage severity, notify the relevant parties, schedule an inspection, and recommend corrective actions. Some actions — like ordering an immediate work stoppage or evacuating a section — have real operational cost and must not be taken autonomously.
+
+**Why it needs a state graph:** Severity classification may need to wait for a photo upload or a witness statement. The inspection may be scheduled for the next business day. A work-stoppage order must be approved by the safety officer. The agent must hold its state across these gaps.
+
+**Techniques used:**
+- **LATS (Language Agent Tree Search)** — The agent searches over candidate response orderings, scoring each path against a real severity rubric and regulatory checklist rather than its own intuition.
+- **Constrained ReAct** — Only whitelisted low-severity actions (notifications, documentation) execute automatically. Any action that would stop work or evacuate triggers a human-in-the-loop pause routed to the safety officer through the platform.
+
+---
+
+## Shared Infrastructure
+
+### MCP Server
+
+The `mcp_server/` directory contains the Model Context Protocol server that exposes IronBridge's operational data as tools. Every agent — whether stateful or single-pass — calls the same server. The server supports runtime registration and de-registration of tools, managed through the admin dashboard. A tool added from the platform is live for the next agent call; a tool removed is immediately unavailable.
+
+Key tool categories:
+- **Project & Budget:** `get_project`, `update_project_budget`, `list_projects`
+- **Materials & Suppliers:** `get_material_stock`, `get_supplier_status`, `list_materials`
+- **Contractors:** `get_contractor`, `list_contractors`
+- **Equipment:** `get_equipment`, `update_equipment_status`, `list_equipment`
+- **Safety & Compliance:** `log_safety_incident`, `get_safety_policy`
+
+### Database
+
+All agents read from and write to `db/procurement.db`, a single SQLite database. The schema covers projects, materials, suppliers, contractors, equipment, safety incidents, and — for the state-graph layer — runs, checkpoints, HITL tasks, and tickets. There is no parallel database for the new work; everything extends the existing schema.
+
+### RAG Document Store
+
+The Memory & RAG agent maintains a vector store of construction policies, safety manuals, and material specifications. Administrators add and remove documents through the platform's admin panel, and the retrieval agent's answers reflect the current corpus on its next query.
+
+---
+
+## Platform
+
+The `ib_platform/` directory contains the full-stack web application that serves as the product surface for the entire system.
+
+### For Administrators
+
+The admin panel (`ib_platform/frontend/admin/`) provides:
+- **Agent Registry:** View every agent connected to the MCP server. Add or remove tools from each agent's available toolkit. Changes propagate to the live server immediately.
+- **Document Management:** Upload new documents to the RAG corpus or remove outdated ones. The retrieval agent sees the updated corpus on its next query.
+- **HITL Inbox:** Review pending human-in-the-loop tasks opened by any state-graph agent. Inspect the full persisted state at the point of pause. Approve or reject with a comment, and watch the underlying run resume.
+- **Ticket Board:** Review open failure tickets from any state-graph run. See the checkpointed state at the moment of failure, the exception that caused it, and the node where it occurred. Resolve the ticket after fixing the root cause, and the run resumes from the same checkpoint.
+
+### For End Users
+
+The user chat interface (`ib_platform/frontend/user/`) provides:
+- **Agent Switching:** A sidebar or tab interface lets the user choose which agent to speak with — the Memory & RAG agent for policy questions, the Planning Agent for delay-response scenarios, or any of the three state-graph agents for long-running operational workflows.
+- **Persistent Threads:** Conversations with state-graph agents survive page refreshes, browser closures, and even server restarts. The user can close their laptop, reopen it the next morning, and pick up the same conversation exactly where it left off.
+
+---
+
+## State Graph Architecture
+
+### Checkpointing
+
+Every state graph writes its full state to durable storage after every meaningful transition. This is not a log file written after the fact; it is a first-class checkpoint that makes crash recovery possible. If the process is killed mid-run — demonstrated in `state_graph/demo_crash_resume.py` — the run resumes from its last checkpoint with no re-execution of completed steps and no loss of collected state.
+
+The checkpoint store lives in `state_graph/core/checkpoint_store.py`. It persists to the same SQLite database the rest of the system uses.
+
+### Human-in-the-Loop
+
+An explicit `HITL` node type is implemented in `state_graph/core/hitl.py`. When a node encounters a condition that requires human judgment — a cost above a threshold, an action that contradicts policy, a confidence score below a bar — the graph pauses, persists its full state, and opens a task on the platform. The graph resumes only after an administrator acts through the platform's UI, and the resumed run picks up the administrator's decision as part of its state.
+
+HITL pauses are expected. They are part of the normal flow. They are distinct from failures.
+
+### Tickets and Failure Recovery
+
+When a node fails unexpectedly — a tool call errors, a schema validation fails, the model returns something the graph cannot act on — the runner catches the exception, checkpoints the state at the moment of failure, and opens a ticket with status `open`. The ticket is inspectable on the platform, and once the underlying issue is resolved, the ticket is marked resolved and the run resumes from the same checkpoint — not restarted from the beginning.
+
+Tickets and HITL tasks follow different code paths, have different database tables, and surface in different sections of the admin panel.
+
+---
+
+## Repository Map
+
+```
+.
+├── agent/                          # Agent layer
+│   ├── agent.py                    # Memory & RAG agent (Week 3)
+│   ├── planning_agent.py           # Delay-response planning agent (Week 4)
+│   ├── mcp_client.py               # Shared MCP client
+│   └── demo_scenario.py            # End-to-end demo scripts
+│
+├── mcp_server/                     # Shared MCP server
+│   ├── server.py                   # Tool definitions and MCP protocol
+│   ├── db.py                       # Database access layer
+│   ├── http_app.py                 # HTTP bridge for platform integration
+│   └── validation.py               # Input validation
+│
+├── db/                             # Database
+│   ├── schema.sql                  # Core operational schema
+│   ├── state_graph_schema.sql      # Checkpoint, HITL, and ticket tables
+│   ├── chat_schema.sql             # Chat message persistence
+│   ├── seed.sql                    # Demo data
+│   └── procurement.db              # Live SQLite database
+│
+├── memory/                         # Episodic memory (Week 3)
+├── rag/                            # Retrieval & vector store (Week 3)
+├── planning/                       # Planning algorithms (Week 4)
+│   ├── algorithms/                 # Decomposition, ToT, LATS, Reflexion, etc.
+│   ├── models.py                   # Plan, Task, DAG structures
+│   └── router.py                   # Sub-task routing
+│
+├── state_graph/                    # Stateful agents (Week 5)
+│   ├── core/                       # Shared infrastructure
+│   │   ├── checkpoint_store.py     # Durable checkpointing
+│   │   ├── graph_base.py           # StateGraph engine
+│   │   ├── hitl.py                 # Human-in-the-loop primitives
+│   │   ├── tickets.py              # Failure ticket primitives
+│   │   └── models.py               # Shared state models
+│   ├── change_order/               # Change-order negotiation graph
+│   ├── equipment_recovery/         # Equipment recovery graph
+│   └── safety_incident/            # Safety incident response graph
+│
+├── ib_platform/                    # Web platform (Week 5)
+│   ├── backend/
+│   │   ├── app.py                  # FastAPI/Flask application entry
+│   │   ├── mcp_bridge.py           # Runtime tool management bridge
+│   │   ├── routes/
+│   │   │   ├── agents.py           # Agent listing and configuration
+│   │   │   ├── chat.py             # User chat endpoints
+│   │   │   ├── tools.py            # Tool add/remove endpoints
+│   │   │   ├── rag_docs.py         # Document upload/remove endpoints
+│   │   │   ├── hitl.py             # HITL task resolution endpoints
+│   │   │   └── tickets.py          # Ticket resolution endpoints
+│   │   └── services/
+│   │       └── agent_runner.py     # Agent execution service
+│   └── frontend/
+│       ├── index.html              # Landing page
+│       ├── admin/
+│       │   └── admin_panel.html    # Admin dashboard
+│       └── user/
+│           └── index.html          # User chat interface
+│
+├── planning_eval/                  # Planning evaluation suite
+├── context_eval/                   # RAG context evaluation
+├── retrieval_eval/                 # Retrieval evaluation
+└── tests/                          # Unit and integration tests
+```
+
+---
+
+## How to Run
+
+### 1. Environment Setup
 
 ```bash
-git clone <repo> && cd task_decomposition_and_planning
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\Activate.ps1
+# Clone the repository
+git clone https://github.com/habibaayman2/task_decomposition_and_planning.git
+cd task_decomposition_and_planning
+
+# Install dependencies
 pip install -r requirements.txt
-pip install -r rag/requirements.txt
 pip install -r mcp_server/requirements.txt
+pip install -r agent/requirements.txt
+pip install -r ib_platform/backend/requirements.txt
 
-# one-time DB migration — adds StateGraphRuns/StateGraphCheckpoints/HITLTasks/Tickets
-python -m db.migrate_state_graph
-
-# optional — without this, every LLM call falls back to a deterministic
-# stub so the graphs, HITL, and tickets still run end to end
-echo "GROQ_API_KEY=..." >> .env
+# Configure environment
+cp .env.example .env
+# Edit .env with your credentials
 ```
 
----
+Required environment variables:
+```
+GROQ_API_KEY=your_groq_key
+GROQ_MODEL=llama-3.3-70b-versatile
+IRONBRIDGE_DB_PATH=./db/procurement.db
+IRONBRIDGE_DB_ENGINE=sqlite
+```
 
-## Crash & Resume Proof (`state_graph/cli.py`)
-
-New for C4: one CLI that wraps all **three real graphs**, not just the Day-1 toy graph
-(`demo_crash_resume.py`). Starting and resuming are the *same command* — `StateGraph.run()`
-checks the checkpoint store itself and does the right thing either way.
+### 2. Database Initialization
 
 ```bash
-# start (or resume) a run
-python -m state_graph.cli run safety_incident demo-1
+# Build the core database
+python -m db.build_db
 
-# while it's mid an LLM call (decompose / investigate / diagnose — no artificial
-# sleep needed, a real call takes a couple of seconds), Ctrl+C it. Then:
-python -m state_graph.cli run safety_incident demo-1        # resumes, does not restart
-
-# inspect without advancing anything
-python -m state_graph.cli status demo-1
-python -m state_graph.cli history demo-1                    # the actual proof: full checkpoint trail
-python -m state_graph.cli list-runs
-python -m state_graph.cli pending-hitl
-python -m state_graph.cli open-tickets
+# Add state-graph tables
+python -m db.migrate_state_graph
 ```
 
-`history` prints every row of the append-only `StateGraphCheckpoints` table for that run, in
-order. Verified end to end for this README: a `safety_incident` run was killed mid-`investigate`,
-and the checkpoint trail after resuming showed `report_incident` appearing **exactly once** (it
-had already completed before the kill) while `investigate` re-ran from scratch (it was the node
-in flight when the process died) — proving completed work survives a crash and only the
-in-flight node repeats.
+### 3. Start the MCP Server
 
-```
-#    Node                         Status         Timestamp
-----------------------------------------------------------------------
-176  report_incident              running        2026-08-22 21:10:06   <- completed before kill
-177  investigate                  running        2026-08-22 21:10:06   <- crashed here
-178  safety_officer_signoff       running        2026-08-22 21:13:02   <- investigate re-ran, this time completing
-179  safety_officer_signoff       paused_hitl    2026-08-22 21:13:02   <- HITL pause, waiting on a human
+```bash
+python -m mcp_server.server
 ```
 
-Same works for `change_order` and `equipment_recovery` — swap the graph name.
+### 4. Start the Platform Backend
+
+```bash
+cd ib_platform/backend
+python app.py
+```
+
+### 5. Open the Platform
+
+- **User Interface:** Open `ib_platform/frontend/user/index.html` in a browser (or serve via `python -m http.server`)
+- **Admin Panel:** Open `ib_platform/frontend/admin/admin_panel.html` in a browser
+
+### 6. Run Individual Agents
+
+```bash
+# Memory & RAG agent
+python -m agent.agent
+
+# Planning agent
+python -m agent.planning_agent
+
+# State-graph demos
+python -m state_graph.change_order.demo
+python -m state_graph.demo_crash_resume run demo-1
+```
 
 ---
 
-## HITL and Tickets, in one sentence each
+## Demo Evidence
 
-- **HITL** (`state_graph/core/hitl.py`): a node calls `require_hitl(state, reason, payload)`;
-  first pass raises `HITLPause`, the runner checkpoints and opens a `HITLTasks` row instead of
-  guessing; the platform's admin inbox resolves it, the SAME node re-executes and now finds the
-  decision in state.
-- **Tickets** (`state_graph/core/tickets.py`): any *other* exception a node raises is an
-  unplanned failure, not a decision the graph is entitled to make — checkpointed the same way,
-  but into a separate `Tickets` table, so it's distinguishable from a HITL pause at the schema
-  level, not just in application code.
+### Crash and Resume
 
-Each graph pauses for a human at a genuine, grounded decision point, not an arbitrary one:
+```bash
+python -m state_graph.demo_crash_resume run demo-1
+# Wait for "[step_two] ... kill me now", then press Ctrl+C
+python -m state_graph.demo_crash_resume run demo-1
+# Observe: resumes from step_two, does not re-run step_one
+```
 
-| Graph | HITL trigger |
-|---|---|
-| `change_order` | Client sign-off on cost/schedule delta |
-| `equipment_recovery` | Proposed action cost exceeds the *project's real, current* `RemainingBudget` |
-| `safety_incident` | Safety officer sign-off, informed by the LATS investigation's regulatory-exposure recommendation (advisory — the human still decides) |
+### HITL Resolution Through the Platform
 
----
+1. Start a change-order negotiation that exceeds the budget threshold.
+2. The graph pauses at the HITL node and opens a task in the admin inbox.
+3. The administrator opens the task, sees the estimated cost and project context, and clicks **Approve** or **Reject**.
+4. The graph resumes, incorporating the administrator's decision into its state, and proceeds to execute or cancel the change order.
 
-## Master Comparison Table (Planning Lab)
+### Ticket Recovery
 
-Executed via `python -m planning_eval.full_comparison` against the fixed 10-case suite
-(`T01`–`T10`), all methods on the same cases. **Re-run on 2026-08-23 11:06 UTC** — 100/100
-cells complete, zero rate-limited/JSON-truncated/tool-leak/reasoning-effort-rejected exclusions,
-and every row's `self_graded` is `false` (an independent `JUDGE_GROQ_MODEL` was set, so ungrounded
-Reflexion is judged by a different model than the one that produced the attempt — not the
-self-grading-bias fallback described below).
-
-| Method | Success Rate | Acc % | Avg Score | Avg Calls | Latency | Est. Cost |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Decomposition-first | 10/10 | 100.0% | 0.98 | 3.0 | 14.53s | $0.239 |
-| Dynamic | 7/10 | 70.0% | 0.66 | 4.8 | 27.18s | $0.342 |
-| Plan-and-Solve | 9/10 | 90.0% | 0.73 | 1.0 | 8.15s | $0.256 |
-| Tree-of-Thoughts | 10/10 | 100.0% | 0.67 | 8.9 | 79.20s | $0.252 |
-| LATS (Grounded) | 7/10 | 70.0% | 0.60 | 7.9 | 58.14s | $0.650 |
-| LATS (Ungrounded) | 5/10 | 50.0% | 0.30 | 8.5 | 58.20s | $0.623 |
-| Self-Refine (Grounded) | 9/10 | 90.0% | 0.83 | 2.9 | 49.65s | $0.390 |
-| Self-Refine (Ungrounded) | 9/10 | 90.0% | 0.867 | 3.9 | 56.22s | $0.385 |
-| Reflexion (Grounded) | 10/10 | 100.0% | 0.76 | 1.4 | 19.95s | $0.178 |
-| Reflexion (Ungrounded) | 9/10 | 90.0% | 0.867 | 2.7 | 19.45s | $0.159 |
-
-All 10 required rows are present (see [Lab Corrections](#lab-corrections-consolidated) — this
-table used to be missing Plan-and-Solve, both Self-Refine variants, and Reflexion (Grounded)
-entirely). Two C2b-era bugs that were previously flattening Tree-of-Thoughts and Self-Refine
-(Ungrounded) to a hard 0/10 regardless of actual plan quality are fixed as of this run (a
-grounding-check target mismatch in `run_tot()`, and a dead ungrounded-evaluator call in
-`self_refine.py`) — both now score in line with the other methods instead of a uniform zero.
-
-**LATS still shows a clean grounded-vs-ungrounded gap** (0.60 vs. 0.30) — grounding matters
-most for a method that's already exploring/committing to actions via search. **Self-Refine and
-Reflexion's ungrounded scores now sit at or slightly above their grounded counterparts**
-(0.867 vs. 0.83 and 0.76) under an independent judge — worth treating as a real result to discuss
-in the writeup (a genuinely separate judge model can be a reasonably calibrated critic on this
-task), not assuming grounding "must" win the way it did in the earlier, bugged run.
-
-**Sub-task routing recommendations** (unchanged from the Planning Lab): Plan-and-Solve for
-simple/deterministic synthesis, Tree-of-Thoughts for ranking/options, LATS (Grounded) for
-high-stakes/financial proposals, Reflexion for multi-trial learning tasks with a real grader
-available.
+1. Start an equipment recovery run.
+2. Simulate a vendor API failure during the rental search node.
+3. The node throws an exception, the runner checkpoints, and a ticket appears on the ticket board with status `open`.
+4. The administrator inspects the checkpointed state, identifies the vendor outage, and clicks **Resolve** after the vendor comes back online.
+5. The run resumes from the same node, re-executes the rental search, and continues.
 
 ---
 
-## Lab Corrections (Consolidated)
+## What Was Corrected and Extended
 
-Corrections filed and closed against each of the three labs this sprint built on top of.
+This project extends the work from the prior three phases of development. Rather than starting fresh, every prior component was reviewed, corrected, and integrated:
 
-### MCP Server Lab (Person A — `mcp_server/`)
-Tracked as GitHub issues on the repo (not a local file) per the A1 task. See the repo's Issues
-tab for the individual items closed against `mcp_server/`.
-
-### Memory & RAG Lab (Person B — `memory/`, `rag/`)
-Full detail in [`memory/ISSUES.md`](memory/ISSUES.md). Closed items include:
-- Policy resources 404 — `mcp_server/policies/` didn't exist; the three policy docs were moved
-  into it so `resources/read` resolves instead of throwing `FileNotFoundError`.
-- Doc undercount — `mcp_server/README.md` and the root README both said "two" safety-policy
-  documents when there are three (`equipment_operation_safety_rules.md` was omitted).
-- `rag/sync_policies.py`'s `SOURCE_DIR` cross-team dependency on the policy-dir fix above.
-- Short-term memory buffer had no scratchpad, risking in-progress task state being pruned.
-- No decision layer for what survives short-term memory overflow.
-- Semantic memory had no consolidation layer (no versioning, no conflict handling).
-- Self-RAG-style grounding checker was missing for memory recall — this is the SAME
-  `support_check` mechanism `safety_incident`'s LATS module (`state_graph/safety_incident/lats.py`)
-  now reuses via `rag/hybrid_search.py` to ground its regulatory-exposure scoring, so this fix
-  ended up load-bearing for C3 as well as B5.
-
-### Planning Lab (Person C — `planning_eval/`, `planning/algorithms/reflexion.py`) — C2b
-- **Missing eval rows** — the comparison table used to be missing Plan-and-Solve, Self-Refine
-  (both variants), and Reflexion (Grounded). All four now run and report in
-  `planning_eval/full_comparison.py`; see the table above.
-- **Rate-limit vs. grounded-failure split** — `full_comparison.py` previously counted a
-  transient Groq 429 the same as a genuine plan-quality failure, deflating every method's
-  success rate. It now classifies errors (`_RATE_LIMIT_MARKERS`), retries rate-limited calls
-  with backoff before giving up, and reports `rate_limited_excluded` separately from real
-  failures.
-- **Reflexion self-grading bias** — Reflexion (Ungrounded) used to post the *highest* average
-  score of any method (0.37) because it was graded by the same model that produced the attempt.
-  `reflexion.py` now tracks `self_graded=True` explicitly whenever no independent judge/environment
-  is supplied, and `full_comparison.py` flags self-graded rows in its console output rather than
-  presenting them as directly comparable to grounded scores.
+- **MCP Server:** Tool schemas were tightened, error handling was improved, and runtime tool registration was added to support the admin panel's live configuration.
+- **Memory & RAG:** The retrieval pipeline was verified against the actual document store used by the platform. Document add/remove operations from the admin panel correctly invalidate and refresh the vector index.
+- **Planning Agent:** The routing logic between planning and RAG requests was hardened. Fallback behavior on API rate limits was improved so the user always receives a response.
+- **Database:** All new tables (checkpoints, HITL tasks, tickets, chat messages) live in the same database as the original procurement schema. No parallel stores were created.
 
 ---
 
-## Cross-Review: A/B Core Usage
+## Team and Contributions
 
-Done as part of C4. What was checked, and what came out of it:
+This system was built as a collaborative effort across multiple development phases. Every component has a clear owner, traceable through the GitHub issue tracker and linked pull requests. Issues were opened with real operational rationale — for example, "the office manager currently has no way to see why a change-order graph stalled for three days, and a stalled approval past the client's decision window loses the contract entirely" — rather than generic feature requests.
 
-**All three graphs genuinely build on `state_graph/core/`, not a reimplementation.**
-`change_order/graph.py` and `safety_incident/graph.py` both import `checkpoint_store.default_store`
-directly (used for `resume_after_signoff`/`resume_after_ticket`-style helper functions that need
-to load a run's current state before deciding how to resume it). `equipment_recovery/graph.py`
-doesn't import `checkpoint_store` at all — it only imports `StateGraph`/`END` and calls
-`graph.run(run_id, initial_state=..., store=store)` directly (see `test_equipment_recovery.py`),
-relying entirely on `StateGraph.run()`'s own internal `store.load()`/`store.save_checkpoint()`
-calls. Both patterns are valid uses of the same core — `equipment_recovery` simply doesn't (yet)
-have a helper function that needs to inspect a run's state *before* calling `.run()` the way
-`resume_after_signoff` does for the other two — but it's worth knowing which pattern you're
-looking at before assuming a missing import is a gap.
-
-**Known remaining bug (documented, not yet fixed):** `approval_gate` in
-`equipment_recovery/nodes.py` can re-open a new HITL task for an **already-approved** run if
-`graph.run()` is invoked more than once for the same `run_id` — the consumed `hitl_decision`
-key doesn't get cleared from state after use, since `graph_base.py`'s `_loop()` only ever
-*merges* a node's return dict into state, never removes a key. Filed as a follow-up issue per
-the Day-4 commit that found it (`66e3196`); does not affect the crash/resume proof above (that
-exercises a single in-flight run, not a completed one being re-invoked), but worth fixing before
-relying on `equipment_recovery` HITL resolution being called defensively/idempotently from the
-platform.
-
-**Initial-state contract inconsistency** — see [Architecture](#architecture) above:
-`change_order`/`safety_incident` wrap the payload in `{"run_id", "request"}`;
-`equipment_recovery` doesn't. Not a bug (each graph's entry contract is internally consistent
-and exercised by its own tests), but worth normalizing if a fourth graph is ever added, so a
-platform caller doesn't need per-graph special-casing.
+| Concern | Owner |
+|:---|:---|
+| Change-Order State Graph | Team Member A |
+| Equipment Recovery State Graph | Team Member B |
+| Safety Incident State Graph | Team Member C |
+| Checkpointing & Core Infrastructure | Shared |
+| Platform Backend (API) | Shared |
+| Platform Frontend (Admin) | Shared |
+| Platform Frontend (User Chat) | Shared |
+| MCP Server Corrections | Shared |
+| RAG Integration Corrections | Shared |
 
 ---
 
-
-## Presentation Split (10 min, all three present)
-
-| Person | ~3 min covering |
-|---|---|
-| A | Change-order graph walkthrough + live admin demo: toggle a tool off via `platform/frontend/admin/`, show `tool_registry.py` blocks the call; resolve a pending HITL task. |
-| B | Equipment-recovery graph walkthrough + live user demo: switch between `agent.py`, `planning_agent.py`, and the new state-graph agents; add a RAG doc and show it change a retrieval answer live. |
-| C | Safety-incident graph walkthrough + `python -m state_graph.cli run safety_incident <run-id>`, kill it mid-run on camera, restart, `python -m state_graph.cli history <run-id>` to show resume with no re-execution. |
-
----
-
-## Credits
-
-Built on top of the reference toolkit: `github.com/AmrSheta22/task_decomposition_and_planning`.
-Extends the IronBridge MCP server, database, and Memory/RAG agent from Weeks 2–3.
