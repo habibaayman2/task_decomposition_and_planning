@@ -469,7 +469,9 @@ async def main():
         import uvicorn
         from http_app import build_asgi_app
         app = build_asgi_app(mcp._mcp_server, init_options)
-        uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+        config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+        server = uvicorn.Server(config)
+        await server.serve()
     else:
         from mcp.server.stdio import stdio_server
 
